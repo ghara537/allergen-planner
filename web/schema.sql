@@ -1,5 +1,5 @@
--- Append-only event log. Two phones inserting different rows never conflict,
--- which is why the data model and the storage engine agree.
+-- Append-only. Two phones inserting different rows never conflict, which is
+-- why the data model and the storage engine agree.
 CREATE TABLE IF NOT EXISTS children (
   id                     TEXT PRIMARY KEY,
   family_id              TEXT NOT NULL,
@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS children (
   readiness_confirmed_on TEXT,
   clinician_cleared      TEXT NOT NULL DEFAULT '[]',
   excluded               TEXT NOT NULL DEFAULT '[]',
+  settings               TEXT NOT NULL DEFAULT '{}',
   updated_at             INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_children_family ON children(family_id);
@@ -27,15 +28,22 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_family ON events(family_id, created_at);
 
-CREATE TABLE IF NOT EXISTS prescriptions (
-  id          TEXT PRIMARY KEY,
-  family_id   TEXT NOT NULL,
-  child_id    TEXT NOT NULL,
-  allergen    TEXT NOT NULL,
-  entered_on  TEXT NOT NULL,
-  attribution TEXT NOT NULL,
-  steps_json  TEXT NOT NULL,
-  supersedes  TEXT,
-  created_at  INTEGER NOT NULL
+-- How a food's amount changes over time. Immutable: an edit writes a new row
+-- that supersedes the old one, so history explains itself.
+CREATE TABLE IF NOT EXISTS dose_plans (
+  id             TEXT PRIMARY KEY,
+  family_id      TEXT NOT NULL,
+  child_id       TEXT NOT NULL,
+  allergen       TEXT NOT NULL,
+  effective_from TEXT NOT NULL,
+  start_amount   REAL NOT NULL,
+  unit           TEXT NOT NULL DEFAULT '',
+  increment      REAL NOT NULL DEFAULT 0,
+  increment_mode TEXT NOT NULL DEFAULT 'add',
+  every_days     INTEGER NOT NULL DEFAULT 7,
+  reactive       INTEGER NOT NULL DEFAULT 0,
+  source         TEXT NOT NULL DEFAULT '',
+  supersedes     TEXT,
+  created_at     INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_rx_family ON prescriptions(family_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_plans_family ON dose_plans(family_id, created_at);

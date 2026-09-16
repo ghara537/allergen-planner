@@ -47,7 +47,22 @@ export interface ChildProfile {
   clinicianCleared: Allergen[];
   /** Not eaten in this household. Skipped with no penalty, no nagging. */
   excluded: Allergen[];
+  /** Set during the walkthrough, editable later. */
+  settings: ChildSettings;
 }
+
+export interface ChildSettings {
+  /** Days between STARTING new allergens. [C] convention, you choose it. */
+  newAllergenCadenceDays: number;
+  /** Days of sustained exposure - first to last - before a food counts as
+   *  settled. [C] no guideline basis; this is your call. */
+  daysToEstablish: number;
+}
+
+export const DEFAULT_SETTINGS: ChildSettings = {
+  newAllergenCadenceDays: 5,
+  daysToEstablish: 21,
+};
 
 export type EventKind = "exposure" | "reaction" | "skippedDeliberate";
 
@@ -64,34 +79,37 @@ export interface FoodEvent {
   supersedes: string | null;
 }
 
-/** Canonical unit is milligrams of ALLERGEN PROTEIN - the clinically
- *  meaningful quantity, and what OIT protocols are written in.
- *  `unit`/`amount` carry what the parent actually typed, for display. */
+/** Whatever the parent measures in. The app stores what they typed and never
+ *  converts, because it has no table of conversions to be wrong about. */
 export interface Dose {
-  mgProtein: number;
-  amount?: number;
-  unit?: string;
+  amount: number;
+  unit: string;
 }
 
-export interface PrescribedStep {
-  index: number;
-  dose: Dose;
-  /** Days to hold at this dose before the next step becomes available. */
-  holdDays: number;
-  /** The parent ticked this line against their clinician's sheet.
-   *  The engine will not schedule an unconfirmed step. No exceptions. */
-  confirmed: boolean;
-}
-
-/** A plan the PARENT entered, attributed to their clinician.
- *  Stored, immutable, superseding. The engine never authors one. */
-export interface Prescription {
+/** How a food's amount changes over time. Entirely user-entered - the engine
+ *  never authors one and never suggests a number. A food with no DosePlan is
+ *  scheduled by name only, which is the default experience.
+ *
+ *  Immutable. Editing creates a new plan effective today that supersedes this
+ *  one, so "start amount" always means "the amount when this rule began". */
+export interface DosePlan {
   id: string;
   childId: string;
   allergen: Allergen;
-  enteredOn: Day;
-  attribution: string;
-  steps: PrescribedStep[];
+  /** The rule starts here. Editing later creates a new plan from that day. */
+  effectiveFrom: Day;
+  startAmount: number;
+  unit: string;
+  /** Add this much, or multiply by it - see mode. Zero or one means "hold". */
+  increment: number;
+  incrementMode: "add" | "multiply";
+  /** Days at an amount before the next step becomes available. */
+  everyDays: number;
+  /** This child reacts to this food, so the plan is a careful build-up rather
+   *  than an introduction. Changes tone and pacing, not the maths. */
+  reactive: boolean;
+  /** Free text, e.g. "Dr Nguyen, 14 Sep" - shown beside the amount if set. */
+  source: string;
   supersedes: string | null;
 }
 
@@ -100,8 +118,9 @@ export interface Config {
   solidsDefaultDays: number;        // [G] ~6 months
   allergensInDietByDays: number;    // [G] by 12 months
   maxNewAllergensPerDay: number;    // [G] one NEW food per meal
-  minDaysBetweenNewAllergens: number; // [C] convention, not guideline
-  exposuresToEstablish: number;     // [C] no guideline basis found
+  /** Fallbacks. Per-child settings on the profile win. */
+  minDaysBetweenNewAllergens: number;
+  daysToEstablish: number;
   maintenanceIntervalDays: number;  // [G] at least weekly, ongoing
   maintenanceThroughDays: number;   // [G] LEAP studied duration
   observationWindowMinutes: number; // [G] minutes to two hours
@@ -120,7 +139,7 @@ export const DEFAULT_CONFIG: Config = {
   allergensInDietByDays: 365,
   maxNewAllergensPerDay: 1,
   minDaysBetweenNewAllergens: 5,
-  exposuresToEstablish: 5,
+  daysToEstablish: 21,
   maintenanceIntervalDays: 7,
   maintenanceThroughDays: 5 * 365,
   observationWindowMinutes: 120,
@@ -139,16 +158,17 @@ export type AllergenStatus =
   | { kind: "inProgress"; exposures: number }
   | { kind: "established"; on: Day }
   | { kind: "pausedAfterReaction"; on: Day }
-  | { kind: "onPrescribedPlan"; step: number; holding: boolean }
+  | { kind: "onDosePlan"; step: number; amount: number; unit: string; reactive: boolean }
   | { kind: "excluded" };
 
 export interface ScheduledItem {
   allergen: Allergen;
   isNew: boolean;
-  /** Present ONLY when the parent entered and confirmed a clinician's plan.
+  /** Present ONLY when the parent has set up a dose plan for this food.
    *  null in the default experience, which is the whole point. */
   dose: Dose | null;
-  attribution: string | null;
+  source: string | null;
+  reactive: boolean;
 }
 
 export interface DayPlan {

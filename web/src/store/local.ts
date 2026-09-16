@@ -1,4 +1,5 @@
-import type { ChildProfile, FoodEvent, Prescription, Allergen, Day } from "../engine/types.js";
+import { DEFAULT_SETTINGS, type ChildProfile, type DosePlan, type FoodEvent,
+         type Allergen, type Day } from "../engine/types.js";
 import { formatDay, parseDay } from "../engine/daymath.js";
 
 /** Local-first. The device copy is the source of truth for rendering; the
@@ -10,7 +11,7 @@ export interface Store {
   familyKey: string;
   children: ChildProfile[];
   events: FoodEvent[];
-  prescriptions: Prescription[];
+  dosePlans: DosePlan[];
   activeChildId: string | null;
   lastSync: number;
   /** ids already accepted by the server, so we only push what is new. */
@@ -18,7 +19,7 @@ export interface Store {
 }
 
 const empty = (): Store => ({
-  familyKey: "", children: [], events: [], prescriptions: [],
+  familyKey: "", children: [], events: [], dosePlans: [],
   activeChildId: null, lastSync: 0, pushed: [],
 });
 
@@ -45,6 +46,7 @@ export const childToRow = (c: ChildProfile) => ({
   readiness_confirmed_on: c.readinessConfirmedOn ? formatDay(c.readinessConfirmedOn) : null,
   clinician_cleared: JSON.stringify(c.clinicianCleared),
   excluded: JSON.stringify(c.excluded),
+  settings: JSON.stringify(c.settings ?? DEFAULT_SETTINGS),
   updated_at: Date.now(),
 });
 
@@ -54,6 +56,7 @@ export const rowToChild = (r: any): ChildProfile => ({
   readinessConfirmedOn: r.readiness_confirmed_on ? parseDay(r.readiness_confirmed_on) : null,
   clinicianCleared: JSON.parse(r.clinician_cleared ?? "[]") as Allergen[],
   excluded: JSON.parse(r.excluded ?? "[]") as Allergen[],
+  settings: r.settings ? JSON.parse(r.settings) : { ...DEFAULT_SETTINGS },
 });
 
 export const eventToRow = (e: FoodEvent) => ({
@@ -68,15 +71,19 @@ export const rowToEvent = (r: any): FoodEvent => ({
   supersedes: r.supersedes ?? null,
 });
 
-export const rxToRow = (p: Prescription) => ({
-  id: p.id, child_id: p.childId, allergen: p.allergen, entered_on: formatDay(p.enteredOn),
-  attribution: p.attribution, steps_json: JSON.stringify(p.steps),
-  supersedes: p.supersedes, created_at: Date.now(),
+export const planToRow = (p: DosePlan) => ({
+  id: p.id, child_id: p.childId, allergen: p.allergen,
+  effective_from: formatDay(p.effectiveFrom), start_amount: p.startAmount, unit: p.unit,
+  increment: p.increment, increment_mode: p.incrementMode, every_days: p.everyDays,
+  reactive: p.reactive ? 1 : 0, source: p.source, supersedes: p.supersedes,
+  created_at: Date.now(),
 });
 
-export const rowToRx = (r: any): Prescription => ({
-  id: r.id, childId: r.child_id, allergen: r.allergen, enteredOn: parseDay(r.entered_on),
-  attribution: r.attribution, steps: JSON.parse(r.steps_json),
+export const rowToPlan = (r: any): DosePlan => ({
+  id: r.id, childId: r.child_id, allergen: r.allergen,
+  effectiveFrom: parseDay(r.effective_from), startAmount: Number(r.start_amount),
+  unit: r.unit ?? "", increment: Number(r.increment), incrementMode: r.increment_mode,
+  everyDays: Number(r.every_days), reactive: !!r.reactive, source: r.source ?? "",
   supersedes: r.supersedes ?? null,
 });
 

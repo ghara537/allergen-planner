@@ -10,7 +10,7 @@ interface Payload {
   family: string;
   children?: Array<Record<string, unknown>>;
   events?: Array<Record<string, unknown>>;
-  prescriptions?: Array<Record<string, unknown>>;
+  dosePlans?: Array<Record<string, unknown>>;
 }
 
 /** POST /api/sync
@@ -29,17 +29,17 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   for (const c of body.children ?? []) {
     stmts.push(env.DB.prepare(
       `INSERT INTO children (id, family_id, name, birth_date, risk_tier, jurisdiction,
-         readiness_confirmed_on, clinician_cleared, excluded, updated_at)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+         readiness_confirmed_on, clinician_cleared, excluded, settings, updated_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
        ON CONFLICT(id) DO UPDATE SET
          name=excluded.name, birth_date=excluded.birth_date, risk_tier=excluded.risk_tier,
          jurisdiction=excluded.jurisdiction, readiness_confirmed_on=excluded.readiness_confirmed_on,
          clinician_cleared=excluded.clinician_cleared, excluded=excluded.excluded,
-         updated_at=excluded.updated_at
+         settings=excluded.settings, updated_at=excluded.updated_at
        WHERE excluded.updated_at > children.updated_at`
     ).bind(c.id, fam, c.name, c.birth_date, c.risk_tier, c.jurisdiction,
            c.readiness_confirmed_on ?? null, c.clinician_cleared ?? "[]",
-           c.excluded ?? "[]", Number(c.updated_at ?? now)));
+           c.excluded ?? "[]", c.settings ?? "{}", Number(c.updated_at ?? now)));
   }
 
   for (const e of body.events ?? []) {
@@ -51,13 +51,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
            e.dose_json ?? null, e.supersedes ?? null, Number(e.created_at ?? now)));
   }
 
-  for (const p of body.prescriptions ?? []) {
+  for (const p of body.dosePlans ?? []) {
     stmts.push(env.DB.prepare(
-      `INSERT OR IGNORE INTO prescriptions
-         (id, family_id, child_id, allergen, entered_on, attribution, steps_json, supersedes, created_at)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`
-    ).bind(p.id, fam, p.child_id, p.allergen, p.entered_on, p.attribution,
-           p.steps_json, p.supersedes ?? null, Number(p.created_at ?? now)));
+      `INSERT OR IGNORE INTO dose_plans
+         (id, family_id, child_id, allergen, effective_from, start_amount, unit,
+          increment, increment_mode, every_days, reactive, source, supersedes, created_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`
+    ).bind(p.id, fam, p.child_id, p.allergen, p.effective_from, p.start_amount,
+           p.unit ?? "", p.increment ?? 0, p.increment_mode ?? "add", p.every_days ?? 7,
+           p.reactive ?? 0, p.source ?? "", p.supersedes ?? null, Number(p.created_at ?? now)));
   }
 
   if (stmts.length) await env.DB.batch(stmts);
