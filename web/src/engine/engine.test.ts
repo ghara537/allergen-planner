@@ -22,7 +22,7 @@ const profile = (o: Partial<ChildProfile> = {}): ChildProfile => ({
   id: KID, name: "Baby", birthDate: born, riskTier: "standard" as RiskTier,
   jurisdiction: "us", readinessConfirmedOn: D(2026, 7, 1),
   clinicianCleared: [], excluded: [],
-  settings: { ...DEFAULT_SETTINGS } as ChildSettings, ...o,
+  settings: { ...DEFAULT_SETTINGS } as ChildSettings, updatedAt: 0, ...o,
 });
 const ev = (a: Allergen, d: Day, kind: FoodEvent["kind"] = "exposure",
             supersedes: string | null = null): FoodEvent =>

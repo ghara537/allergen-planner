@@ -49,6 +49,10 @@ export interface ChildProfile {
   excluded: Allergen[];
   /** Set during the walkthrough, editable later. */
   settings: ChildSettings;
+  /** When this profile last actually changed. Child rows are the one mutable
+   *  thing in the schema, so the server resolves them last-writer-wins on
+   *  this - which only works if it marks real edits, not every sync. */
+  updatedAt: number;
 }
 
 /** Minutes from midnight. A nap is a position on a day, not a timestamp -

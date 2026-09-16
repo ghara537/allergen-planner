@@ -48,7 +48,7 @@ export const childToRow = (c: ChildProfile) => ({
   clinician_cleared: JSON.stringify(c.clinicianCleared),
   excluded: JSON.stringify(c.excluded),
   settings: JSON.stringify(c.settings ?? DEFAULT_SETTINGS),
-  updated_at: Date.now(),
+  updated_at: c.updatedAt ?? 0,
 });
 
 export const rowToChild = (r: any): ChildProfile => ({
@@ -58,6 +58,7 @@ export const rowToChild = (r: any): ChildProfile => ({
   clinicianCleared: JSON.parse(r.clinician_cleared ?? "[]") as Allergen[],
   excluded: JSON.parse(r.excluded ?? "[]") as Allergen[],
   settings: r.settings ? JSON.parse(r.settings) : { ...DEFAULT_SETTINGS },
+  updatedAt: Number(r.updated_at) || 0,
 });
 
 export const eventToRow = (e: FoodEvent) => ({

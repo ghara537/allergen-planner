@@ -20,6 +20,9 @@ let lastSig = "";
 let editing: Allergen | null = null;
 let logDay: Day | null = null;      // the calendar sheet, when open
 let logMonth: Day | null = null;
+/** "idle" before a link is entered, "looking" while the first pull runs,
+ *  "found" once we know what is on the other end. */
+let connect: "idle" | "looking" | "found" = "idle";
 
 /** Walkthrough state. Lives only until it is committed. */
 let wiz: null | {
@@ -48,9 +51,20 @@ const isTyping = () => {
 function maybeRender() { if (!dragging && !isTyping() && signature() !== lastSig) render(); }
 
 function commit(mut: (s: Store) => void) {
-  mut(store); save(store); render();
+  // Stamp only the profiles that genuinely changed. Bumping updatedAt on
+  // every sync made two devices ping-pong, each overwriting the other's edits.
+  const before = new Map(store.children.map((c) => [c.id, fingerprint(c)]));
+  mut(store);
+  for (const c of store.children) {
+    if (before.get(c.id) !== fingerprint(c)) c.updatedAt = Date.now();
+  }
+  save(store); render();
   void sync(store).then((r) => { store = r.store; online = r.online; maybeRender(); });
 }
+
+const fingerprint = (c: ChildProfile) =>
+  JSON.stringify([c.name, c.birthDate, c.riskTier, c.jurisdiction,
+                  c.readinessConfirmedOn, c.clinicianCleared, c.excluded, c.settings]);
 
 const activeChild = (): ChildProfile | null =>
   store.children.find((c) => c.id === store.activeChildId) ?? store.children[0] ?? null;
@@ -60,7 +74,7 @@ const setOf = (c: ChildProfile) => ALLERGENS_BY_JURISDICTION[c.jurisdiction];
 function render() {
   const c = activeChild();
   if (wiz) root().innerHTML = wizardView();
-  else if (!store.familyKey || !c) root().innerHTML = startView();
+  else if (!store.familyKey || connect !== "idle" || !c) root().innerHTML = startView();
   else if (logDay) root().innerHTML = logView(c);
   else if (editing) root().innerHTML = editView(c, editing);
   else root().innerHTML = tabView(c) + navBar() + statusLine();
@@ -90,16 +104,40 @@ function tabView(c: ChildProfile): string {
 // ------------------------------------------------------------------ start
 
 function startView(): string {
+  if (connect === "looking") {
+    return `<h1>Looking…</h1>
+      <p class="sub">Checking what's already on <b>${esc(store.familyKey)}</b>.</p>`;
+  }
+
+  if (connect === "found") {
+    const kids = store.children;
+    return `<h1>${kids.length ? "Found it" : "Nothing here yet"}</h1>
+      <p class="sub">Family link <b>${esc(store.familyKey)}</b>.</p>
+      ${kids.length ? `<div class="card"><ul class="list">${kids.map((k) =>
+        `<li><span>${esc(k.name)} <span class="when">· born ${formatDay(k.birthDate)}</span></span>
+          <button class="ghost sm" data-act="use-child" data-id="${k.id}">Open</button></li>`
+        ).join("")}</ul></div>
+        <p class="note">Pick a child to carry on where the other device left off.</p>`
+      : `<div class="card"><p class="note">No children are saved under this link yet.
+           If you expected some, check the spelling — the link is the only thing
+           tying two devices together.</p></div>`}
+      <div class="row">
+        <button class="${kids.length ? "ghost" : "primary"}" data-act="new-child">Start a new child</button>
+      </div>
+      <div class="row"><button class="ghost" data-act="relink">Use a different link</button></div>`;
+  }
+
   return `<h1>Allergen Planner</h1>
     <p class="sub">A week-by-week plan for introducing solids and allergens.
       It never suggests an amount — you decide those.</p>
     <div class="card">
       <label for="fam">Family link</label>
       <input id="fam" value="${esc(store.familyKey)}" placeholder="e.g. huang-7f3a" autocapitalize="off">
-      <p class="note">Anyone who opens this app with the same family link sees the same plan.
-        Pick something not guessable — there are no passwords.</p>
+      <p class="note">Type the same link on every phone and you all share one plan.
+        A new link starts fresh. There are no passwords, so pick something
+        not guessable.</p>
     </div>
-    <button class="primary" data-act="begin">Start</button>`;
+    <button class="primary" data-act="begin">Continue</button>`;
 }
 
 // --------------------------------------------------------------- walkthrough
@@ -196,7 +234,7 @@ function wizardView(): string {
       </div>`;
   }
 
-  const back = w.step > 0 ? `<button class="ghost" data-act="wiz-back">Back</button>` : "";
+  const back = `<button class="ghost" data-act="wiz-back">Back</button>`;
   const next = w.step < 3
     ? `<button class="primary" data-act="wiz-next">Continue</button>`
     : `<button class="primary" data-act="wiz-done">Build the plan</button>`;
@@ -576,11 +614,33 @@ function handle(act: string, data: DOMStringMap) {
       const k = val("fam").trim();
       if (!k) { alert("Pick a family link first."); return; }
       store.familyKey = k; save(store);
+      // Pull BEFORE offering to create anything, or a second device is
+      // marched into making a duplicate child it can never merge away.
+      connect = "looking"; render();
+      void sync(store).then((r) => {
+        store = r.store; online = r.online; connect = "found";
+        if (!online) alert("Could not reach the server, so this is what is saved on "
+          + "this device only. Anything you add will sync when you are back online.");
+        render();
+      });
+      break;
+    }
+    case "use-child":
+      connect = "idle"; tab = "today";
+      commit((s) => { s.activeChildId = data.id!; });
+      break;
+    case "relink": connect = "idle"; render(); break;
+    case "new-child":
+      connect = "idle";
       wiz = { step: 0, name: "", dob: "", risk: "standard", ready: false,
               exposure: {}, doses: {}, cadence: "5", settle: "21" };
       render(); break;
+    case "wiz-back": {
+      captureWizard();
+      if (wiz!.step === 0) { wiz = null; connect = "found"; }
+      else wiz!.step--;
+      render(); break;
     }
-    case "wiz-back": captureWizard(); wiz!.step--; render(); break;
     case "wiz-next": {
       captureWizard();
       if (wiz!.step === 0 && (!wiz!.name || !wiz!.dob)) { alert("Name and date of birth, please."); return; }
@@ -589,7 +649,16 @@ function handle(act: string, data: DOMStringMap) {
     case "ex": { wiz!.exposure[data.a as Allergen] = data.v as Exposure; render(); break; }
     case "wiz-done": { captureWizard(); finishWizard(); break; }
 
-    case "save-family": commit((s) => { s.familyKey = val("fam2").trim(); }); break;
+    case "save-family": {
+      const k = val("fam2").trim();
+      if (!k || k === store.familyKey) return;
+      store.familyKey = k; save(store);
+      connect = "looking"; render();
+      void sync(store).then((r) => {
+        store = r.store; online = r.online; connect = "found"; render();
+      });
+      break;
+    }
     case "save-settings": {
       if (!c) return;
       const cad = num("cad2", 5), set = num("set2", 21);
@@ -602,6 +671,7 @@ function handle(act: string, data: DOMStringMap) {
     }
     case "pick": commit((s) => { s.activeChildId = data.id!; }); tab = "today"; break;
     case "add-child":
+      connect = "idle";
       wiz = { step: 0, name: "", dob: "", risk: "standard", ready: false,
               exposure: {}, doses: {}, cadence: "5", settle: "21" };
       render(); break;
@@ -757,6 +827,7 @@ function finishWizard() {
     jurisdiction: "us", readinessConfirmedOn: w.ready ? d : null,
     clinicianCleared: [], excluded: [],
     settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: cadence, daysToEstablish: settle },
+    updatedAt: Date.now(),
   };
   const events: FoodEvent[] = [];
   const plans: DosePlan[] = [];
