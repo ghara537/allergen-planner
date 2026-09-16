@@ -1,0 +1,9 @@
+name = "allergen-planner"
+compatibility_date = "2024-11-06"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "allergen-planner"
+# Replace with the id printed by: wrangler d1 create allergen-planner
+database_id = "478e5497-3be6-4f75-925b-3bd59c5b895e"

@@ -1,0 +1,63 @@
+{
+  "_comment": "The spec lives here, not in the Swift. Same file validates a future Kotlin port.",
+  "cases": [
+    {
+      "name": "late-start-8-months-partial-history",
+      "why": "The primary case, not an edge case. Garrett's own situation.",
+      "profile": { "birthDate": "2026-01-14", "riskTier": "standard", "jurisdiction": "us" },
+      "history": [
+        { "allergen": "peanut", "day": "2026-08-02", "kind": "exposure" },
+        { "allergen": "peanut", "day": "2026-08-05", "kind": "exposure" },
+        { "allergen": "peanut", "day": "2026-08-09", "kind": "exposure" },
+        { "allergen": "egg",    "day": "2026-08-20", "kind": "exposure" }
+      ],
+      "today": "2026-09-14",
+      "expect": {
+        "introduce": "egg",
+        "note_contains": "egg is mid-introduction, finish before starting another",
+        "maintenanceDue": ["peanut"],
+        "maintenance_reason": "36 days since last peanut exposure, interval is 7"
+      }
+    },
+    {
+      "name": "two-weeks-skipped-must-not-stack",
+      "why": "The catch-up invariant. Falling behind extends, never compresses.",
+      "today": "2026-09-14",
+      "expect": { "introduce_count": 1, "assert": "never more than one new allergen on any day" }
+    },
+    {
+      "name": "reaction-pauses-one-food-only",
+      "why": "ASCIA: other allergens still proceed. Naive impls halt everything.",
+      "history": [ { "allergen": "egg", "day": "2026-09-01", "kind": "reaction" } ],
+      "expect": { "egg_status": "pausedAfterReaction", "introduce_not": "egg", "introduce_is_not_nil": true }
+    },
+    {
+      "name": "high-risk-emits-no-home-schedule",
+      "why": "The one hard safety gate.",
+      "profile": { "riskTier": "severeEczemaOrEggAllergy", "clinicianCleared": false },
+      "expect": { "blocked": "needsSpecialistEvaluation", "introduce": null }
+    },
+    {
+      "name": "too-young",
+      "profile": { "birthDate": "2026-08-01" },
+      "today": "2026-09-14",
+      "expect": { "blocked": "tooYoung" }
+    },
+    {
+      "name": "maintenance-outlives-introduction",
+      "why": "The retention engine. All 9 established, child is 3 years old.",
+      "today": "2029-09-14",
+      "expect": { "introduce": null, "maintenanceDue_nonempty": true }
+    },
+    {
+      "name": "eu-jurisdiction-has-a-different-allergen-set",
+      "profile": { "jurisdiction": "eu" },
+      "expect": { "schedules_includes": ["celery", "mustard", "lupin", "mollusc"] }
+    },
+    {
+      "name": "excluded-allergens-never-scheduled",
+      "profile": { "excluded": ["shellfish", "fish"] },
+      "expect": { "never_introduces": ["shellfish", "fish"], "no_penalty_note": true }
+    }
+  ]
+}

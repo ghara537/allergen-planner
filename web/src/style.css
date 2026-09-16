@@ -1,0 +1,76 @@
+:root{
+  --paper:#0F1317; --surface:#171D24; --surface-2:#1F262E;
+  --ink:#E7ECF1; --ink-2:#A6B1BD; --ink-3:#77838F;
+  --rule:#28313A; --jade:#3FBCA0; --jade-deep:#12302B;
+  --brick:#E08874; --brick-deep:#33201C; --ochre:#D3A73F; --ochre-deep:#2E2616;
+  --pad: 18px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{
+  background:var(--paper); color:var(--ink);
+  font:400 17px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overscroll-behavior-y:contain;
+}
+#app{max-width:560px;margin:0 auto;padding:0 var(--pad) 96px}
+
+h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:22px 0 2px}
+h2{font-size:13px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+   color:var(--ink-3);margin:30px 0 10px}
+.sub{color:var(--ink-2);font-size:15px;margin:0 0 18px}
+
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:14px;
+      padding:20px;margin-bottom:12px}
+.card.hero{border-left:3px solid var(--jade)}
+.card.warn{border-left:3px solid var(--ochre);background:var(--ochre-deep)}
+.card.stop{border-left:3px solid var(--brick);background:var(--brick-deep)}
+.eyebrow{font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+         color:var(--jade);font-weight:600;margin-bottom:8px}
+.card.warn .eyebrow{color:var(--ochre)} .card.stop .eyebrow{color:var(--brick)}
+.big{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:0 0 4px}
+.dose{font-size:15px;color:var(--jade);font-variant-numeric:tabular-nums;margin:6px 0 0}
+.attrib{font-size:12px;color:var(--ink-3);margin-top:6px}
+.note{font-size:14px;line-height:1.45;color:var(--ink-2);margin:10px 0 0}
+
+button{font:inherit;border:none;border-radius:11px;padding:15px 18px;
+       background:var(--surface-2);color:var(--ink);cursor:pointer;
+       min-height:50px;touch-action:manipulation}
+button:active{opacity:.75}
+button:focus-visible{outline:2px solid var(--jade);outline-offset:2px}
+button.primary{background:var(--jade);color:#06231D;font-weight:650;width:100%}
+button.ghost{background:transparent;border:1px solid var(--rule);color:var(--ink-2)}
+button.danger{background:var(--brick-deep);color:var(--brick);border:1px solid var(--brick)}
+.row{display:flex;gap:9px;margin-top:12px}
+.row>*{flex:1}
+
+label{display:block;font-size:13px;color:var(--ink-2);margin:14px 0 6px}
+input,select{width:100%;font:inherit;background:var(--surface-2);color:var(--ink);
+  border:1px solid var(--rule);border-radius:10px;padding:13px;min-height:50px}
+input:focus,select:focus{outline:2px solid var(--jade);outline-offset:-1px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.list{list-style:none;padding:0;margin:0}
+.list li{display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:14px 0;border-bottom:1px solid var(--rule)}
+.list li:last-child{border-bottom:none}
+.when{font-size:13px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pill{font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;
+      padding:4px 9px;border-radius:999px;background:var(--jade-deep);color:var(--jade)}
+.pill.over{background:var(--ochre-deep);color:var(--ochre)}
+.pill.stop{background:var(--brick-deep);color:var(--brick)}
+
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;
+    background:rgba(15,19,23,.92);backdrop-filter:blur(12px);
+    border-top:1px solid var(--rule);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border-radius:0;color:var(--ink-3);font-size:12px;
+           padding:11px 4px;min-height:auto}
+nav button[aria-current="true"]{color:var(--jade)}
+nav .ico{display:block;font-size:19px;margin-bottom:2px}
+
+.status{font-size:12px;color:var(--ink-3);text-align:center;margin:16px 0 0}
+.status .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+             background:var(--ink-3);margin-right:6px;vertical-align:middle}
+.status.on .dot{background:var(--jade)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
