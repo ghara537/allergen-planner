@@ -30,6 +30,7 @@ const ev = (a: Allergen, d: Day, kind: FoodEvent["kind"] = "exposure",
 const dp = (o: Partial<DosePlan> = {}): DosePlan => ({
   id: `p${seq++}`, childId: KID, allergen: "peanut", effectiveFrom: D(2026, 8, 1),
   startAmount: 1, unit: "tsp", increment: 1, incrementMode: "add", everyDays: 7,
+  feedEveryDays: 1,
   reactive: false, source: "", supersedes: null, ...o,
 });
 const one = (p: ChildProfile, h: FoodEvent[], plans: DosePlan[] = [], on: Day = today) =>
@@ -99,8 +100,8 @@ check("a plan not yet in force is ignored",
 
 console.log("\n== Amounts only ever come from a plan ==");
 check("no plan, no dose", one(profile(), sustained).introduce?.dose === null);
-check("no plan, no dose on maintenance",
-  one(profile(), sustained).maintenanceDue.every((m) => m.dose === null));
+check("no plan, no dose on the rest of the day",
+  one(profile(), sustained).alsoDue.every((m: any) => m.dose === null));
 const withPlan = one(profile(), [ev("egg", addDays(-30, today))],
   [dp({ allergen: "egg", startAmount: 3, increment: 0, effectiveFrom: addDays(-30, today) })]);
 check("a plan supplies the dose", withPlan.introduce?.dose?.amount === 3);
@@ -141,8 +142,43 @@ for (const a of ALLERGENS_BY_JURISDICTION.us) {
 }
 const toddler = one(profile(), all, [], D(2029, 9, 14));
 check("nothing left to introduce", toddler.introduce === null);
-check("maintenance still due", toddler.maintenanceDue.length > 0);
-check("window closes after five years", one(profile(), all, [], D(2032, 9, 14)).maintenanceDue.length === 0);
+check("maintenance still due", toddler.alsoDue.length > 0);
+check("window closes after five years", one(profile(), all, [], D(2032, 9, 14)).alsoDue.length === 0);
+
+console.log("\n== Each food has its own cadence ==");
+{
+  // Fed peanut yesterday on a daily plan: still due today.
+  const daily = dp({ allergen: "peanut", feedEveryDays: 1, increment: 0, startAmount: 1,
+                     effectiveFrom: addDays(-30, today) });
+  const yday = [ev("peanut", addDays(-1, today))];
+  const r1 = one(profile(), yday, [daily]);
+  check("a daily dose plan is due the next day",
+    r1.introduce?.allergen === "peanut" || r1.alsoDue.some((m: any) => m.allergen === "peanut"));
+
+  // Same food, weekly plan, fed yesterday: not due.
+  const weekly = dp({ allergen: "peanut", feedEveryDays: 7, increment: 0, startAmount: 1,
+                      effectiveFrom: addDays(-30, today) });
+  const r2 = one(profile(), yday, [weekly]);
+  check("a weekly dose plan is not due the next day",
+    r2.introduce?.allergen !== "peanut" && !r2.alsoDue.some((m: any) => m.allergen === "peanut"));
+
+  // A food being worked up to should come round daily, not weekly.
+  const working = [ev("egg", addDays(-10, today)), ev("egg", addDays(-2, today))];
+  const r3 = one(profile(), working);
+  check("an in-progress food is due again after a day",
+    r3.introduce?.allergen === "egg" || r3.alsoDue.some((m: any) => m.allergen === "egg"));
+
+  // A settled food fed three days ago is not due on a weekly interval.
+  const settled = [ev("wheat", addDays(-40, today)), ev("wheat", addDays(-3, today))];
+  const r4 = one(profile(), settled);
+  check("a settled food is not due three days later",
+    !r4.alsoDue.some((m: any) => m.allergen === "wheat"));
+
+  // Nothing is ever listed twice on one day.
+  const busy = one(profile(), [...sustained, ...working], [daily]);
+  const named = [busy.introduce?.allergen, ...busy.alsoDue.map((m: any) => m.allergen)].filter(Boolean);
+  check("no food appears twice in a day", new Set(named).size === named.length);
+}
 
 console.log("\n== Timeline ==");
 const naps: NapSlot[] = [

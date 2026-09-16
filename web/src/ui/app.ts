@@ -7,6 +7,7 @@ import {
 } from "../engine/types.js";
 import { addDays, daysBetween, formatDay, parseDay, todayLocal } from "../engine/daymath.js";
 import { load, save, uid, type Store } from "../store/local.js";
+import { effective } from "../engine/planner.js";
 import { sync } from "../store/sync.js";
 
 type Tab = "today" | "schedule" | "foods" | "setup";
@@ -17,6 +18,8 @@ let tab: Tab = "today";
 let online = false;
 let lastSig = "";
 let editing: Allergen | null = null;
+let logDay: Day | null = null;      // the calendar sheet, when open
+let logMonth: Day | null = null;
 
 /** Walkthrough state. Lives only until it is committed. */
 let wiz: null | {
@@ -58,6 +61,7 @@ function render() {
   const c = activeChild();
   if (wiz) root().innerHTML = wizardView();
   else if (!store.familyKey || !c) root().innerHTML = startView();
+  else if (logDay) root().innerHTML = logView(c);
   else if (editing) root().innerHTML = editView(c, editing);
   else root().innerHTML = tabView(c) + navBar() + statusLine();
   wire();
@@ -236,9 +240,24 @@ function todayView(c: ChildProfile): string {
 
   html += renderTimeline(blocks, st.dayStartMin, st.dayEndMin, nowMin);
 
+  const foods = [...(p.introduce ? [p.introduce] : []), ...p.alsoDue];
+  html += `<h2>Today's foods</h2><div class="card">${foods.length
+    ? `<ul class="list">` + foods.map((f) => {
+        const done = loggedOn(c.id, f.allergen, d, "exposure");
+        const bad = loggedOn(c.id, f.allergen, d, "reaction");
+        return `<li><label class="check tap">
+            <input type="checkbox" data-act="toggle" data-a="${f.allergen}"
+              data-d="${formatDay(d)}"${done ? " checked" : ""}${bad ? " disabled" : ""}>
+            <span>${esc(label(f.allergen))}${f.isNew ? ` <span class="pill">new</span>` : ""}
+              ${f.dose ? `<span class="when"> · ${esc(fmtAmount(f.dose))}</span>` : ""}
+              ${bad ? `<span class="pill stop">reacted</span>` : ""}</span></label>
+          <button class="ghost sm" data-act="react" data-a="${f.allergen}">Reaction</button></li>`;
+      }).join("") + `</ul>`
+    : `<p class="note">Nothing due today. The next food is spaced out.</p>`}</div>`;
+
   for (const n of p.notes) html += `<div class="card warn"><p class="note">${esc(n)}</p></div>`;
   html += `<div class="row">
-    <button class="ghost" data-act="backfill">Log another day</button>
+    <button class="ghost" data-act="open-log">🗓 Another day</button>
     <button class="ghost" data-act="reset-naps">Reset naps</button></div>`;
   return html;
 }
@@ -293,6 +312,11 @@ function renderTimeline(blocks: TimelineBlock[], from: number, to: number, nowMi
       Changes apply to today only and everyone on the family link sees them.</p>`;
 }
 
+function loggedOn(childId: string, a: Allergen, d: Day, kind: FoodEvent["kind"]): boolean {
+  return effective(store.events).some((e) => e.childId === childId && e.allergen === a
+    && e.kind === kind && formatDay(e.day) === formatDay(d));
+}
+
 function planFrom(c: ChildProfile, from: Day, through: Day): DayPlan[] {
   return plan({ profile: c, history: store.events, dosePlans: store.dosePlans, from, through });
 }
@@ -302,12 +326,12 @@ function planFrom(c: ChildProfile, from: Day, through: Day): DayPlan[] {
 function scheduleView(c: ChildProfile): string {
   const from = today();
   const rows = planFrom(c, from, addDays(29, from))
-    .filter((p) => p.introduce || p.maintenanceDue.length)
+    .filter((p) => p.introduce || p.alsoDue.length)
     .map((p) => {
       const bits: string[] = [];
       if (p.introduce) bits.push(`<span class="pill">${esc(label(p.introduce.allergen))}${
         p.introduce.dose ? ` ${esc(fmtAmount(p.introduce.dose))}` : ""}</span>`);
-      if (p.maintenanceDue.length) bits.push(`<span class="pill over">${p.maintenanceDue.length} to keep up</span>`);
+      if (p.alsoDue.length) bits.push(`<span class="pill over">${p.alsoDue.length} to keep up</span>`);
       return `<li><span class="when">${formatDay(p.day)}</span><span>${bits.join(" ")}</span></li>`;
     }).join("");
   return `<h1>Next 30 days</h1>
@@ -337,6 +361,61 @@ function foodsView(c: ChildProfile): string {
     <p class="sub">The app never suggests an amount. Anything shown here is what you entered.</p>
     <div class="card"><ul class="list">${items}</ul></div>`;
 }
+
+// -------------------------------------------------------------------- log
+
+const MONTHS = ["January","February","March","April","May","June",
+                "July","August","September","October","November","December"];
+
+function logView(c: ChildProfile): string {
+  const sel = logDay!;
+  const m = logMonth ?? sel;
+  const lead = new Date(Date.UTC(m.year, m.month - 1, 1)).getUTCDay();
+  const len = new Date(Date.UTC(m.year, m.month, 0)).getUTCDate();
+  const now = today();
+
+  let cells = "";
+  for (let i = 0; i < lead; i++) cells += `<span class="cal-pad"></span>`;
+  for (let dd = 1; dd <= len; dd++) {
+    const cand: Day = { year: m.year, month: m.month, day: dd };
+    const future = compareDayUI(cand, now) > 0;
+    const marked = effective(store.events).some((e) => e.childId === c.id
+      && formatDay(e.day) === formatDay(cand));
+    cells += `<button class="cal-day${formatDay(cand) === formatDay(sel) ? " on" : ""}${
+      formatDay(cand) === formatDay(now) ? " today" : ""}${future ? " off" : ""}"
+      ${future ? "disabled" : ""} data-act="pick-day" data-d="${formatDay(cand)}">
+      ${dd}${marked ? `<i class="dot"></i>` : ""}</button>`;
+  }
+
+  const rows = setOf(c).map((a) => {
+    const done = loggedOn(c.id, a, sel, "exposure");
+    const bad = loggedOn(c.id, a, sel, "reaction");
+    return `<li><label class="check tap">
+        <input type="checkbox" data-act="toggle" data-a="${a}" data-d="${formatDay(sel)}"
+          ${done ? " checked" : ""}${bad ? " disabled" : ""}>
+        <span>${esc(label(a))}${bad ? ` <span class="pill stop">reacted</span>` : ""}</span>
+      </label></li>`;
+  }).join("");
+
+  return `<h1>Log a day</h1>
+  <div class="card">
+    <div class="cal-head">
+      <button class="ghost sm" data-act="cal-prev" aria-label="previous month">‹</button>
+      <b>${MONTHS[m.month - 1]} ${m.year}</b>
+      <button class="ghost sm" data-act="cal-next" aria-label="next month">›</button>
+    </div>
+    <div class="cal-dow">${["S","M","T","W","T","F","S"].map((x) => `<span>${x}</span>`).join("")}</div>
+    <div class="cal">${cells}</div>
+  </div>
+  <h2>${esc(formatDay(sel))}</h2>
+  <div class="card"><ul class="list">${rows}</ul></div>
+  <p class="status">Tick what they ate. Unticking records that it did not happen —
+    nothing is ever deleted, it is superseded.</p>
+  <div class="row"><button class="primary" data-act="log-close">Done</button></div>`;
+}
+
+const compareDayUI = (a: Day, b: Day) =>
+  Date.UTC(a.year, a.month - 1, a.day) - Date.UTC(b.year, b.month - 1, b.day);
 
 // ------------------------------------------------------------------- edit
 
@@ -372,6 +451,11 @@ function editView(c: ChildProfile, a: Allergen): string {
         <input id="in" inputmode="decimal" value="${esc(String(p?.increment ?? ""))}" placeholder="0 to hold"></div>
       <div><label for="ev">Every (days)</label>
         <input id="ev" inputmode="numeric" value="${esc(String(p?.everyDays ?? ""))}" placeholder="7"></div>
+    </div>
+    <div class="grid2">
+      <div><label for="fe">Serve every (days)</label>
+        <input id="fe" inputmode="numeric" value="${esc(String(p?.feedEveryDays ?? ""))}" placeholder="${reactive ? 1 : 7}"></div>
+      <div></div>
     </div>
     <label for="md">How</label>
     <select id="md">
@@ -457,8 +541,13 @@ function setupView(c: ChildProfile): string {
 function wire() {
   root().querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
     b.onclick = () => { tab = b.dataset.tab as Tab; editing = null; render(); });
-  root().querySelectorAll<HTMLButtonElement>("[data-act]").forEach((b) =>
-    b.onclick = () => handle(b.dataset.act!, b.dataset));
+  root().querySelectorAll<HTMLElement>("[data-act]").forEach((b) => {
+    if (b instanceof HTMLInputElement && b.type === "checkbox") {
+      b.onchange = () => handle(b.dataset.act!, b.dataset);
+    } else {
+      b.onclick = () => handle(b.dataset.act!, b.dataset);
+    }
+  });
   const c = activeChild();
   if (c && tab === "today" && !editing && !wiz) wireDrag(c);
 }
@@ -529,13 +618,32 @@ function handle(act: string, data: DOMStringMap) {
         + "If breathing is affected, call emergency services now.")) return;
       addEvent(c.id, data.a as Allergen, today(), "reaction"); break;
     }
-    case "backfill": {
+    case "open-log": logDay = today(); logMonth = today(); render(); break;
+    case "log-close": logDay = null; logMonth = null; render(); break;
+    case "pick-day": logDay = parseDay(data.d!); render(); break;
+    case "cal-prev": case "cal-next": {
+      const m = logMonth ?? logDay ?? today();
+      const step = act === "cal-next" ? 1 : -1;
+      const nm = m.month + step;
+      logMonth = { year: m.year + (nm > 12 ? 1 : nm < 1 ? -1 : 0),
+                   month: ((nm - 1 + 12) % 12) + 1, day: 1 };
+      render(); break;
+    }
+    case "toggle": {
       if (!c) return;
-      const when = prompt("Which day? (YYYY-MM-DD)", formatDay(addDays(-1, today())));
-      if (!when) return;
-      const a = prompt("Which food?\n" + setOf(c).join(", "));
-      if (!a) return;
-      addEvent(c.id, a.trim() as Allergen, parseDay(when), "exposure"); break;
+      const a = data.a as Allergen, d = parseDay(data.d!);
+      const live = effective(store.events).find((e) => e.childId === c.id && e.allergen === a
+        && e.kind === "exposure" && formatDay(e.day) === formatDay(d));
+      if (live) {
+        // Nothing is deleted. A supersedeing "not today" retires the exposure.
+        commit((s) => {
+          s.events.push({ id: uid(), childId: c.id, allergen: a, day: d,
+                          kind: "skippedDeliberate", dose: null, supersedes: live.id });
+        });
+      } else {
+        addEvent(c.id, a, d, "exposure");
+      }
+      break;
     }
 
     case "add-nap": {
@@ -601,6 +709,7 @@ function handle(act: string, data: DOMStringMap) {
       const prev = planFor(store.dosePlans, a, today());
       const unit = val("un").trim(), src = val("src").trim();
       const inc = Number(val("in")) || 0, every = Number(val("ev")) || 7;
+      const feedEvery = Math.max(1, Number(val("fe")) || (reactive ? 1 : 7));
 
       commit((s) => {
         const k = s.children.find((x) => x.id === c.id)!;
@@ -611,7 +720,8 @@ function handle(act: string, data: DOMStringMap) {
             id: uid(), childId: c.id, allergen: a, effectiveFrom: today(),
             startAmount: amount, unit, increment: inc,
             incrementMode: (val("md") as "add" | "multiply") || "add",
-            everyDays: every, reactive, source: src, supersedes: prev?.id ?? null,
+            everyDays: every, feedEveryDays: feedEvery, reactive,
+            source: src, supersedes: prev?.id ?? null,
           });
         }
       });
@@ -674,7 +784,8 @@ function finishWizard() {
         id: uid(), childId: kid.id, allergen: a, effectiveFrom: d,
         startAmount: Number(dose.amount), unit: dose.unit.trim(),
         increment: Number(dose.inc) || 0, incrementMode: dose.mode,
-        everyDays: Number(dose.every) || 7, reactive: e === "reacts",
+        everyDays: Number(dose.every) || 7,
+        feedEveryDays: e === "reacts" ? 1 : 7, reactive: e === "reacts",
         source: "", supersedes: null,
       });
     }

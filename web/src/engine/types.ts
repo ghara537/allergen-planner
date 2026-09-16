@@ -155,6 +155,9 @@ export interface DosePlan {
   incrementMode: "add" | "multiply";
   /** Days at an amount before the next step becomes available. */
   everyDays: number;
+  /** How often this food is actually served. Daily is the norm when building
+   *  an amount back up; weekly is plenty for a settled food. */
+  feedEveryDays: number;
   /** This child reacts to this food, so the plan is a careful build-up rather
    *  than an introduction. Changes tone and pacing, not the maths. */
   reactive: boolean;
@@ -225,7 +228,9 @@ export interface DayPlan {
   day: Day;
   ageInDays: number;
   introduce: ScheduledItem | null;
-  maintenanceDue: ScheduledItem[];
+  /** Everything else due today - settled foods needing a top-up, foods being
+   *  worked up to, and anything on a dose plan whose cadence has come round. */
+  alsoDue: ScheduledItem[];
   blocked: BlockReason | null;
   notes: string[];
 }

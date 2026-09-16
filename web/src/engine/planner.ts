@@ -104,7 +104,7 @@ function planOne(
   const notes: string[] = [];
   const set = ALLERGENS_BY_JURISDICTION[profile.jurisdiction];
   const blocked = (b: DayPlan["blocked"], note: string): DayPlan => ({
-    day, ageInDays: age, introduce: null, maintenanceDue: [], blocked: b, notes: [note],
+    day, ageInDays: age, introduce: null, alsoDue: [], blocked: b, notes: [note],
   });
 
   if (age < config.solidsFloorDays) {
@@ -130,21 +130,30 @@ function planOne(
     };
   };
 
-  // --- Maintenance [G] ----------------------------------------------------
-  // Several at once is fine: these foods are already settled, so there is no
-  // attribution problem. Only NEW foods are capped.
+  // --- Everything due today ------------------------------------------------
+  // Each food has its own cadence. A dose plan says how often it is served; a
+  // food being worked up to wants near-daily contact; a settled food only
+  // needs its weekly top-up. Applying one interval to all three was wrong.
   const due: Array<[Allergen, number]> = [];
   if (age <= config.maintenanceThroughDays) {
     for (const a of set) {
-      const s = status[a];
-      if (s?.kind !== "established" && s?.kind !== "onDosePlan") continue;
+      if (profile.excluded.includes(a)) continue;
+      const s2 = status[a];
+      if (!s2) continue;
       const last = lastExposure(a, history, day);
-      if (!last) continue;
-      const gap = daysBetween(last, day);
-      if (gap >= config.maintenanceIntervalDays) due.push([a, gap]);
+      const gap = last ? daysBetween(last, day) : Infinity;
+      let cadence: number | null = null;
+      if (s2.kind === "onDosePlan") {
+        cadence = planFor(plans, a, day)?.feedEveryDays || 1;
+      } else if (s2.kind === "inProgress") {
+        cadence = 1;
+      } else if (s2.kind === "established") {
+        cadence = config.maintenanceIntervalDays;
+      }
+      if (cadence !== null && gap >= cadence) due.push([a, last ? gap : 9999]);
     }
   }
-  let maintenanceDue = due.sort((x, y) => y[1] - x[1]).map(([a]) => item(a, false));
+  let alsoDue = due.sort((x, y) => y[1] - x[1]).map(([a]) => item(a, false));
 
   // --- Introduction -------------------------------------------------------
   // Order matters. A food whose amount is actively being managed outranks
@@ -152,19 +161,21 @@ function planOne(
   // and the new food loses nothing by waiting a day.
   let introduce: ScheduledItem | null = null;
 
+  // Only promote a dose-plan food that is ACTUALLY due - its own cadence
+  // decides that, not merely "a day has passed".
+  const dueNow = new Set(alsoDue.map((m) => m.allergen));
   const onPlan = config.priority.find((a) =>
-    status[a]?.kind === "onDosePlan"
-    && !profile.excluded.includes(a)
-    && readyForNextExposure(a, history, day));
+    status[a]?.kind === "onDosePlan" && dueNow.has(a));
 
   if (onPlan) {
     introduce = item(onPlan, false);
     // Promoted out of maintenance so it never appears twice on one day.
-    maintenanceDue = maintenanceDue.filter((m) => m.allergen !== onPlan);
+    alsoDue = alsoDue.filter((m) => m.allergen !== onPlan);
   } else {
     const active = config.priority.find((a) => status[a]?.kind === "inProgress") ?? null;
     if (active && readyForNextExposure(active, history, day)) {
       introduce = item(active, false);
+      alsoDue = alsoDue.filter((m) => m.allergen !== active);
     } else {
       const blockedBySerial = config.serialIntroduction && active !== null;
       const lastStart = lastNewStart(history, day);
@@ -213,7 +224,7 @@ function planOne(
     notes.push(`Serve earlier in the day and watch for about ${Math.round(config.observationWindowMinutes / 60)} hours.`);
   }
 
-  return { day, ageInDays: age, introduce, maintenanceDue, blocked: null, notes };
+  return { day, ageInDays: age, introduce, alsoDue, blocked: null, notes };
 }
 
 // --- derivation -----------------------------------------------------------
@@ -341,7 +352,7 @@ export function timeline(args: {
   // room before sleep. Maintenance fills the rest in order.
   const foods = [
     ...(p.introduce ? [p.introduce] : []),
-    ...p.maintenanceDue,
+    ...p.alsoDue,
   ];
 
   foods.forEach((f, i) => {

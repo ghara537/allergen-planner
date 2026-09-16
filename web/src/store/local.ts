@@ -76,6 +76,7 @@ export const planToRow = (p: DosePlan) => ({
   id: p.id, child_id: p.childId, allergen: p.allergen,
   effective_from: formatDay(p.effectiveFrom), start_amount: p.startAmount, unit: p.unit,
   increment: p.increment, increment_mode: p.incrementMode, every_days: p.everyDays,
+  feed_every_days: p.feedEveryDays,
   reactive: p.reactive ? 1 : 0, source: p.source, supersedes: p.supersedes,
   created_at: Date.now(),
 });
@@ -84,7 +85,8 @@ export const rowToPlan = (r: any): DosePlan => ({
   id: r.id, childId: r.child_id, allergen: r.allergen,
   effectiveFrom: parseDay(r.effective_from), startAmount: Number(r.start_amount),
   unit: r.unit ?? "", increment: Number(r.increment), incrementMode: r.increment_mode,
-  everyDays: Number(r.every_days), reactive: !!r.reactive, source: r.source ?? "",
+  everyDays: Number(r.every_days), feedEveryDays: Number(r.feed_every_days) || 1,
+  reactive: !!r.reactive, source: r.source ?? "",
   supersedes: r.supersedes ?? null,
 });
 

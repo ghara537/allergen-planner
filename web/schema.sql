@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS dose_plans (
   increment      REAL NOT NULL DEFAULT 0,
   increment_mode TEXT NOT NULL DEFAULT 'add',
   every_days     INTEGER NOT NULL DEFAULT 7,
+  feed_every_days INTEGER NOT NULL DEFAULT 1,
   reactive       INTEGER NOT NULL DEFAULT 0,
   source         TEXT NOT NULL DEFAULT '',
   supersedes     TEXT,

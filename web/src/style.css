@@ -145,3 +145,24 @@ button.sm{flex:none;min-height:38px;padding:8px 13px}
   background:repeating-linear-gradient(135deg,transparent,transparent 6px,
   rgba(211,167,63,.12) 6px,rgba(211,167,63,.12) 12px)}
 .blk.obs.clash span{color:var(--ochre)}
+
+/* ---- calendar ---- */
+.cal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.cal-head b{font-family:-apple-system,system-ui,sans-serif;font-size:17px}
+.cal-head button{min-width:44px;font-size:20px;line-height:1}
+.cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.cal-dow span{text-align:center;font-size:11px;color:var(--ink-3);letter-spacing:.06em}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-pad{aspect-ratio:1}
+.cal-day{position:relative;aspect-ratio:1;min-height:0;padding:0;border-radius:10px;
+  background:var(--surface-2);color:var(--ink);font-size:15px;
+  font-variant-numeric:tabular-nums;display:grid;place-items:center}
+.cal-day.today{box-shadow:inset 0 0 0 1px var(--ink-3)}
+.cal-day.on{background:var(--jade);color:#06231D;font-weight:700}
+.cal-day.off{opacity:.3}
+.cal-day .dot{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+  width:4px;height:4px;border-radius:50%;background:var(--jade)}
+.cal-day.on .dot{background:#06231D}
+
+label.check.tap{margin:0;flex:1;cursor:pointer;align-items:center}
+.list li label.check.tap span{font-size:16px}

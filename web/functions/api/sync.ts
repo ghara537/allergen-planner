@@ -56,11 +56,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     stmts.push(env.DB.prepare(
       `INSERT OR IGNORE INTO dose_plans
          (id, family_id, child_id, allergen, effective_from, start_amount, unit,
-          increment, increment_mode, every_days, reactive, source, supersedes, created_at)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`
+          increment, increment_mode, every_days, feed_every_days, reactive, source,
+          supersedes, created_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)`
     ).bind(p.id, fam, p.child_id, p.allergen, p.effective_from, p.start_amount,
            p.unit ?? "", p.increment ?? 0, p.increment_mode ?? "add", p.every_days ?? 7,
-           p.reactive ?? 0, p.source ?? "", p.supersedes ?? null, Number(p.created_at ?? now)));
+           p.feed_every_days ?? 1, p.reactive ?? 0, p.source ?? "",
+           p.supersedes ?? null, Number(p.created_at ?? now)));
   }
 
   for (const o of body.dayOverrides ?? []) {
