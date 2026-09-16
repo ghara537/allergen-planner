@@ -127,6 +127,7 @@ function planOne(
       dose: p ? amountOn(p, day, history) : null,
       source: p?.source || null,
       reactive: p?.reactive ?? false,
+      reactedOn: lastReaction(a, history, profile.id, day),
     };
   };
 
@@ -149,6 +150,12 @@ function planOne(
         cadence = 1;
       } else if (s2.kind === "established") {
         cadence = config.maintenanceIntervalDays;
+      } else if (s2.kind === "reactedBefore") {
+        // Still on the plan, still visibly flagged. Careful testing is the
+        // point; hiding it was not.
+        cadence = 1;
+      } else if (s2.kind === "notStarted" && (profile.scheduled ?? []).includes(a)) {
+        cadence = 1;
       }
       if (cadence !== null && gap >= cadence) due.push([a, last ? gap : 9999]);
     }
@@ -165,7 +172,8 @@ function planOne(
   // decides that, not merely "a day has passed".
   const dueNow = new Set(alsoDue.map((m) => m.allergen));
   const onPlan = config.priority.find((a) =>
-    status[a]?.kind === "onDosePlan" && dueNow.has(a));
+    (status[a]?.kind === "onDosePlan" || status[a]?.kind === "reactedBefore")
+    && dueNow.has(a));
 
   if (onPlan) {
     introduce = item(onPlan, false);
@@ -206,9 +214,9 @@ function planOne(
   }
   for (const a of set) {
     const s = status[a];
-    if (s?.kind === "pausedAfterReaction") {
-      notes.push(`${label(a)} is paused after a reaction. Other foods continue as normal. `
-        + "Set up a plan for it if you are building the amount back up.");
+    if (s?.kind === "reactedBefore") {
+      notes.push(`${label(a)} caused a reaction on ${fmtDay(s.on)}. It stays on the plan so you `
+        + "can build back up carefully — set an amount for it, and talk to your clinician.");
     }
   }
   const remaining = set.filter((a) => !profile.excluded.includes(a) && status[a]?.kind === "notStarted");
@@ -238,6 +246,14 @@ export function effectivePlans(p: DosePlan[]): DosePlan[] {
   return p.filter((x) => !superseded.has(x.id));
 }
 
+export function lastReaction(
+  a: Allergen, history: FoodEvent[], childId: string, onOrBefore: Day,
+): Day | null {
+  const ds = history.filter((e) => e.childId === childId && e.allergen === a
+    && e.kind === "reaction" && compareDay(e.day, onOrBefore) <= 0).map((e) => e.day);
+  return ds.length ? ds.reduce((x, y) => (compareDay(x, y) >= 0 ? x : y)) : null;
+}
+
 export function statuses(
   profile: ChildProfile, history: FoodEvent[], plans: DosePlan[], day: Day,
 ): Partial<Record<Allergen, AllergenStatus>> {
@@ -257,11 +273,13 @@ export function statuses(
                  unit: d.unit, reactive: p.reactive };
       continue;
     }
-    // [G] ASCIA: a reaction pauses THAT food only. Others proceed.
-    const reaction = [...events].reverse().find((e) => e.kind === "reaction");
-    if (reaction) { out[a] = { kind: "pausedAfterReaction", on: reaction.day }; continue; }
-
-    if (!exposures.length) { out[a] = { kind: "notStarted" }; continue; }
+    if (!exposures.length) {
+      // A food reacted to but never since eaten still belongs on the plan -
+      // dropping it hides the reaction and blocks careful re-testing.
+      const r = lastReaction(a, history, profile.id, day);
+      out[a] = r ? { kind: "reactedBefore", on: r } : { kind: "notStarted" };
+      continue;
+    }
     // Settled = sustained exposure across the window, first to LAST - so one
     // exposure followed by silence never counts.
     const first = exposures[0]!.day, last = exposures[exposures.length - 1]!.day;
@@ -299,6 +317,9 @@ const LABELS: Record<Allergen, string> = {
   celery: "Celery", mustard: "Mustard", lupin: "Lupin", mollusc: "Mollusc",
 };
 export function label(a: Allergen): string { return LABELS[a]; }
+
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+export const fmtDay = (d: Day) => `${d.day} ${MON[d.month - 1]} ${d.year}`;
 
 export function fmtAmount(d: Dose | null): string {
   if (!d) return "";
@@ -365,7 +386,7 @@ export function timeline(args: {
     const end = Math.min(start + FEED_LEN, gap[1]);
     out.push({
       kind: "feed", startMin: start, endMin: end,
-      allergen: f.allergen, dose: f.dose, isNew: f.isNew,
+      allergen: f.allergen, dose: f.dose, isNew: f.isNew, reactedOn: f.reactedOn,
       status: feedStatus(f.allergen, history, childId, day, end, nowMin),
     });
     if (f.isNew) {
@@ -389,7 +410,7 @@ function feedStatus(
   if (!a) return "due";
   const same = history.filter((e) => e.childId === childId && e.allergen === a
     && compareDay(e.day, day) === 0);
-  if (same.some((e) => e.kind === "reaction")) return "reacted";
+  if (same.some((e) => e.kind === "reaction")) return "reacted";   // TODAY only
   if (same.some((e) => e.kind === "exposure")) return "done";
   if (nowMin !== undefined && nowMin > endMin) return "missed";
   return "due";

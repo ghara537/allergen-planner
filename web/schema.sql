@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS children (
   readiness_confirmed_on TEXT,
   clinician_cleared      TEXT NOT NULL DEFAULT '[]',
   excluded               TEXT NOT NULL DEFAULT '[]',
+  scheduled              TEXT NOT NULL DEFAULT '[]',
   settings               TEXT NOT NULL DEFAULT '{}',
   updated_at             INTEGER NOT NULL
 );

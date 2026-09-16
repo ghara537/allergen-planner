@@ -30,17 +30,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   for (const c of body.children ?? []) {
     stmts.push(env.DB.prepare(
       `INSERT INTO children (id, family_id, name, birth_date, risk_tier, jurisdiction,
-         readiness_confirmed_on, clinician_cleared, excluded, settings, updated_at)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+         readiness_confirmed_on, clinician_cleared, excluded, scheduled, settings, updated_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
        ON CONFLICT(id) DO UPDATE SET
          name=excluded.name, birth_date=excluded.birth_date, risk_tier=excluded.risk_tier,
          jurisdiction=excluded.jurisdiction, readiness_confirmed_on=excluded.readiness_confirmed_on,
          clinician_cleared=excluded.clinician_cleared, excluded=excluded.excluded,
-         settings=excluded.settings, updated_at=excluded.updated_at
+         scheduled=excluded.scheduled, settings=excluded.settings,
+         updated_at=excluded.updated_at
        WHERE excluded.updated_at > children.updated_at`
     ).bind(c.id, fam, c.name, c.birth_date, c.risk_tier, c.jurisdiction,
            c.readiness_confirmed_on ?? null, c.clinician_cleared ?? "[]",
-           c.excluded ?? "[]", c.settings ?? "{}", Number(c.updated_at ?? now)));
+           c.excluded ?? "[]", c.scheduled ?? "[]", c.settings ?? "{}",
+           Number(c.updated_at ?? now)));
   }
 
   for (const e of body.events ?? []) {

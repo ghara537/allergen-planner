@@ -21,7 +21,7 @@ let seq = 0;
 const profile = (o: Partial<ChildProfile> = {}): ChildProfile => ({
   id: KID, name: "Baby", birthDate: born, riskTier: "standard" as RiskTier,
   jurisdiction: "us", readinessConfirmedOn: D(2026, 7, 1),
-  clinicianCleared: [], excluded: [],
+  clinicianCleared: [], excluded: [], scheduled: [],
   settings: { ...DEFAULT_SETTINGS } as ChildSettings, updatedAt: 0, ...o,
 });
 const ev = (a: Allergen, d: Day, kind: FoodEvent["kind"] = "exposure",
@@ -108,12 +108,37 @@ check("a plan supplies the dose", withPlan.introduce?.dose?.amount === 3);
 check("unit rides along", withPlan.introduce?.dose?.unit === "tsp");
 check("formats", fmtAmount({ amount: 2.5, unit: "tsp" }) === "2.5 tsp");
 
-console.log("\n== Reaction ==");
+console.log("\n== Reaction is a flag, not a gate ==");
 const reacted = [...sustained, ev("egg", D(2026, 9, 1), "reaction")];
 const r = one(profile(), reacted);
-check("reacted food is not scheduled", r.introduce?.allergen !== "egg");
-check("other foods still proceed", r.introduce !== null);
-check("reaction note present", r.notes.some((n) => n.includes("paused after a reaction")));
+const named = [r.introduce, ...r.alsoDue].filter(Boolean) as any[];
+check("a reacted food stays on the plan", named.some((m) => m.allergen === "egg"));
+check("and carries the reaction date",
+  named.find((m) => m.allergen === "egg")?.reactedOn !== null);
+check("the date is the reaction's, not today's",
+  JSON.stringify(named.find((m) => m.allergen === "egg")?.reactedOn) === JSON.stringify(D(2026, 9, 1)));
+check("other foods still proceed", named.length > 1);
+check("the note says when", r.notes.some((n) => n.includes("caused a reaction on")));
+check("a food never reacted to has no flag",
+  named.filter((m) => m.allergen !== "egg").every((m) => m.reactedOn === null));
+check("the flag survives later exposures",
+  one(profile(), [...reacted, ev("egg", D(2026, 9, 12))]).alsoDue
+    .concat([one(profile(), [...reacted, ev("egg", D(2026, 9, 12))]).introduce as any])
+    .filter(Boolean).some((m: any) => m.allergen === "egg" && m.reactedOn !== null));
+
+console.log("\n== Explicitly scheduled foods ==");
+{
+  const queued = one(profile({ scheduled: ["sesame"] }), sustained);
+  const all = [queued.introduce, ...queued.alsoDue].filter(Boolean) as any[];
+  check("a food put on the schedule shows up now",
+    all.some((m) => m.allergen === "sesame"));
+  const notQueued = one(profile(), sustained);
+  const all2 = [notQueued.introduce, ...notQueued.alsoDue].filter(Boolean) as any[];
+  check("one not on the schedule waits its turn",
+    !all2.some((m) => m.allergen === "sesame"));
+  check("still only one NEW food a day",
+    [queued.introduce, ...queued.alsoDue].filter((m) => m?.isNew).length <= 1);
+}
 const rebuilding = one(profile(), reacted,
   [dp({ allergen: "egg", startAmount: 0.25, reactive: true, effectiveFrom: D(2026, 9, 2) })]);
 check("a plan lets a reacted food resume", rebuilding.introduce?.allergen === "egg");

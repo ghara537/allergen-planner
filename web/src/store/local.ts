@@ -47,6 +47,7 @@ export const childToRow = (c: ChildProfile) => ({
   readiness_confirmed_on: c.readinessConfirmedOn ? formatDay(c.readinessConfirmedOn) : null,
   clinician_cleared: JSON.stringify(c.clinicianCleared),
   excluded: JSON.stringify(c.excluded),
+  scheduled: JSON.stringify(c.scheduled ?? []),
   settings: JSON.stringify(c.settings ?? DEFAULT_SETTINGS),
   updated_at: c.updatedAt ?? 0,
 });
@@ -57,6 +58,7 @@ export const rowToChild = (r: any): ChildProfile => ({
   readinessConfirmedOn: r.readiness_confirmed_on ? parseDay(r.readiness_confirmed_on) : null,
   clinicianCleared: JSON.parse(r.clinician_cleared ?? "[]") as Allergen[],
   excluded: JSON.parse(r.excluded ?? "[]") as Allergen[],
+  scheduled: JSON.parse(r.scheduled ?? "[]") as Allergen[],
   settings: r.settings ? JSON.parse(r.settings) : { ...DEFAULT_SETTINGS },
   updatedAt: Number(r.updated_at) || 0,
 });

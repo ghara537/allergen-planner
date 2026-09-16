@@ -47,6 +47,9 @@ export interface ChildProfile {
   clinicianCleared: Allergen[];
   /** Not eaten in this household. Skipped with no penalty, no nagging. */
   excluded: Allergen[];
+  /** Foods the parent has explicitly put on the plan. These come round on
+   *  their own cadence instead of waiting their turn in the new-food queue. */
+  scheduled: Allergen[];
   /** Set during the walkthrough, editable later. */
   settings: ChildSettings;
   /** When this profile last actually changed. Child rows are the one mutable
@@ -114,6 +117,7 @@ export interface TimelineBlock {
   dose?: Dose | null;
   isNew?: boolean;
   status?: FeedStatus;
+  reactedOn?: Day | null;
   /** observation only - true when the watch window runs into a nap */
   clashesWithNap?: boolean;
 }
@@ -214,7 +218,7 @@ export type AllergenStatus =
   | { kind: "notStarted" }
   | { kind: "inProgress"; exposures: number }
   | { kind: "established"; on: Day }
-  | { kind: "pausedAfterReaction"; on: Day }
+  | { kind: "reactedBefore"; on: Day }
   | { kind: "onDosePlan"; step: number; amount: number; unit: string; reactive: boolean }
   | { kind: "excluded" };
 
@@ -226,6 +230,10 @@ export interface ScheduledItem {
   dose: Dose | null;
   source: string | null;
   reactive: boolean;
+  /** Set if this child has ever reacted to this food. Carried on the item so
+   *  the warning follows the food everywhere it is shown, instead of the food
+   *  quietly disappearing from the plan. */
+  reactedOn: Day | null;
 }
 
 export interface DayPlan {

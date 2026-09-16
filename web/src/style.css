@@ -166,3 +166,19 @@ button.sm{flex:none;min-height:38px;padding:8px 13px}
 
 label.check.tap{margin:0;flex:1;cursor:pointer;align-items:center}
 .list li label.check.tap span{font-size:16px}
+
+/* consistent tick affordance between naps, feeds and lists */
+label.check.tap input[type=checkbox]{width:26px;height:26px;border-radius:50%;
+  appearance:none;-webkit-appearance:none;border:1.5px solid var(--rule);
+  background:transparent;display:grid;place-items:center;flex:none;cursor:pointer}
+label.check.tap input[type=checkbox]:checked{border-color:var(--jade);background:var(--jade)}
+label.check.tap input[type=checkbox]:checked::after{content:"✓";color:#06231D;
+  font-size:15px;font-weight:700;line-height:1}
+label.check.tap input[type=checkbox]:disabled{opacity:.45;cursor:default}
+label.check.tap input[type=checkbox]:focus-visible{outline:2px solid var(--jade);outline-offset:2px}
+.pill[title]{cursor:help}
+select{appearance:none;-webkit-appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),
+                   linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);
+  background-position:calc(100% - 18px) calc(1em + 2px),calc(100% - 13px) calc(1em + 2px);
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:38px}

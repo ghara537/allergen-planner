@@ -1,5 +1,5 @@
-import { plan, statuses, planFor, amountOn, label, fmtAmount,
-         timeline, napsFor, hhmm } from "../engine/planner.js";
+import { plan, statuses, planFor, amountOn, label, fmtAmount, fmtDay,
+         timeline, napsFor, hhmm, lastReaction } from "../engine/planner.js";
 import {
   ALLERGENS_BY_JURISDICTION, DEFAULT_SETTINGS,
   type Allergen, type ChildProfile, type Day, type DayPlan, type DosePlan,
@@ -278,6 +278,17 @@ function todayView(c: ChildProfile): string {
 
   html += renderTimeline(blocks, st.dayStartMin, st.dayEndMin, nowMin);
 
+  const everReacted = setOf(c)
+    .map((a) => [a, lastReaction(a, store.events, c.id, d)] as const)
+    .filter(([, r]) => r);
+  if (everReacted.length) {
+    html += `<div class="card warn"><div class="eyebrow">Reacted before</div>
+      <p class="note">${everReacted.map(([a, r]) =>
+        `<b>${esc(label(a))}</b> — ${esc(fmtDay(r!))}`).join("<br>")}</p>
+      <p class="note">These stay on the plan so you can build back up carefully.
+        Set an amount for each one under Foods.</p></div>`;
+  }
+
   const foods = [...(p.introduce ? [p.introduce] : []), ...p.alsoDue];
   html += `<h2>Today's foods</h2><div class="card">${foods.length
     ? `<ul class="list">` + foods.map((f) => {
@@ -288,12 +299,29 @@ function todayView(c: ChildProfile): string {
               data-d="${formatDay(d)}"${done ? " checked" : ""}${bad ? " disabled" : ""}>
             <span>${esc(label(f.allergen))}${f.isNew ? ` <span class="pill">new</span>` : ""}
               ${f.dose ? `<span class="when"> · ${esc(fmtAmount(f.dose))}</span>` : ""}
-              ${bad ? `<span class="pill stop">reacted</span>` : ""}</span></label>
-          <button class="ghost sm" data-act="react" data-a="${f.allergen}">Reaction</button></li>`;
+              ${bad ? `<span class="pill stop">reacted today</span>`
+                : f.reactedOn ? `<span class="pill over" title="reacted before">⚠ ${esc(fmtDay(f.reactedOn))}</span>` : ""}
+            </span></label></li>`;
       }).join("") + `</ul>`
     : `<p class="note">Nothing due today. The next food is spaced out.</p>`}</div>`;
 
-  for (const n of p.notes) html += `<div class="card warn"><p class="note">${esc(n)}</p></div>`;
+  for (const n of p.notes) {
+    if (n.includes("caused a reaction")) continue;   // already shown above
+    html += `<div class="card warn"><p class="note">${esc(n)}</p></div>`;
+  }
+
+  // Recording a reaction is deliberate and lives on its own, so it is never a
+  // mis-tap next to the "ate it" checkboxes.
+  html += `<h2>Something went wrong?</h2>
+    <div class="card stop">
+      <label for="rxa">Record a reaction today</label>
+      <select id="rxa">${setOf(c).map((a) =>
+        `<option value="${a}">${esc(label(a))}</option>`).join("")}</select>
+      <div class="row"><button class="danger" data-act="react-today">Record reaction</button></div>
+      <p class="note">If breathing is affected, call emergency services now.
+        This only records what happened — it does not tell you what to do.</p>
+    </div>`;
+
   html += `<div class="row">
     <button class="ghost" data-act="open-log">🗓 Another day</button>
     <button class="ghost" data-act="reset-naps">Reset naps</button></div>`;
@@ -337,7 +365,7 @@ function renderTimeline(blocks: TimelineBlock[], from: number, to: number, nowMi
     const s = b.status ?? "due";
     return `<div class="blk feed ${s}" style="top:${top}px;height:${hgt}px">
       <div class="blk-in">
-        <b>${esc(label(b.allergen!))}${b.isNew ? " · new" : ""}</b>
+        <b>${esc(label(b.allergen!))}${b.isNew ? " · new" : ""}${b.reactedOn ? " ⚠" : ""}</b>
         <span class="t">${esc(hhmm(b.startMin))}${b.dose ? " · " + esc(fmtAmount(b.dose)) : ""}</span>
         ${s === "done" ? `<span class="tick on">✓</span>`
           : s === "reacted" ? `<span class="tick bad">!</span>`
@@ -387,7 +415,7 @@ function foodsView(c: ChildProfile): string {
     const s = st[a];
     let pill = `<span class="pill">not started</span>`;
     if (s?.kind === "excluded") pill = `<span class="pill stop">skipped</span>`;
-    else if (s?.kind === "pausedAfterReaction") pill = `<span class="pill stop">reacted</span>`;
+    else if (s?.kind === "reactedBefore") pill = `<span class="pill stop">⚠ ${esc(fmtDay(s.on))}</span>`;
     else if (s?.kind === "onDosePlan") pill = `<span class="pill ${s.reactive ? "over" : ""}">${
       esc(fmtAmount({ amount: s.amount, unit: s.unit }))}</span>`;
     else if (s?.kind === "established") pill = `<span class="pill">settled</span>`;
@@ -462,11 +490,17 @@ function editView(c: ChildProfile, a: Allergen): string {
   const p = planFor(store.dosePlans, a, d);
   const cur = p ? amountOn(p, d, store.events) : null;
   const st = statuses(c, store.events, store.dosePlans, d)[a];
-  const reacted = st?.kind === "pausedAfterReaction";
+  const reacted = st?.kind === "reactedBefore";
   const reactive = p?.reactive ?? reacted;
   const excluded = c.excluded.includes(a);
+  const onSchedule = (c.scheduled ?? []).includes(a) || !!p;
+  const reactedBefore = lastReaction(a, store.events, c.id, d);
 
   return `<h1>${esc(label(a))}</h1>
+  ${reactedBefore ? `<div class="card warn"><div class="eyebrow">Reacted before</div>
+    <p class="note">This food caused a reaction on <b>${esc(fmtDay(reactedBefore))}</b>.
+      It stays on the plan so you can build back up. Talk to your clinician about the amounts.</p>
+    </div>` : ""}
   <p class="sub">${p
     ? `Showing where this food is now — after ${p.effectiveFrom ? `${daysBetween(p.effectiveFrom, d)} days on` : ""} the current plan.
        Saving starts a fresh plan from today at whatever you enter.`
@@ -505,6 +539,9 @@ function editView(c: ChildProfile, a: Allergen): string {
   </div>
 
   <div class="card">
+    <label class="check"><input type="checkbox" id="sch"${onSchedule ? " checked" : ""}>
+      <span>On the schedule — bring it round on its own cadence</span></label>
+    <p class="note">Off, it waits its turn in the new-food queue. On, it appears from today.</p>
     <label class="check"><input type="checkbox" id="exc"${excluded ? " checked" : ""}>
       <span>We don't eat this — leave it out of the plan</span></label>
   </div>
@@ -682,11 +719,14 @@ function handle(act: string, data: DOMStringMap) {
       break;
     }
     case "log": if (c) addEvent(c.id, data.a as Allergen, today(), "exposure"); break;
-    case "react": {
+    case "react-today": {
       if (!c) return;
-      if (!confirm("Log a reaction? This pauses that food only — everything else carries on. "
-        + "If breathing is affected, call emergency services now.")) return;
-      addEvent(c.id, data.a as Allergen, today(), "reaction"); break;
+      const a = val("rxa") as Allergen;
+      if (!a) return;
+      if (!confirm(`Record a reaction to ${label(a)} today?\n\n`
+        + "The food stays on the plan and stays flagged. If breathing is affected, "
+        + "call emergency services now.")) return;
+      addEvent(c.id, a, today(), "reaction"); break;
     }
     case "open-log": logDay = today(); logMonth = today(); render(); break;
     case "log-close": logDay = null; logMonth = null; render(); break;
@@ -775,6 +815,7 @@ function handle(act: string, data: DOMStringMap) {
       const a = data.a as Allergen;
       const amount = Number(val("am"));
       const excl = (document.getElementById("exc") as HTMLInputElement).checked;
+      const sch = (document.getElementById("sch") as HTMLInputElement).checked;
       const reactive = (document.getElementById("rx") as HTMLInputElement).checked;
       const prev = planFor(store.dosePlans, a, today());
       const unit = val("un").trim(), src = val("src").trim();
@@ -784,6 +825,8 @@ function handle(act: string, data: DOMStringMap) {
       commit((s) => {
         const k = s.children.find((x) => x.id === c.id)!;
         k.excluded = excl ? [...new Set([...k.excluded, a])] : k.excluded.filter((x) => x !== a);
+        const cur = k.scheduled ?? [];
+        k.scheduled = sch ? [...new Set([...cur, a])] : cur.filter((x) => x !== a);
         if (Number.isFinite(amount) && amount > 0) {
           // An edit never rewrites the old rule; it starts a new one today.
           s.dosePlans.push({
@@ -825,7 +868,7 @@ function finishWizard() {
   const kid: ChildProfile = {
     id: uid(), name: w.name.trim(), birthDate: parseDay(w.dob), riskTier: w.risk,
     jurisdiction: "us", readinessConfirmedOn: w.ready ? d : null,
-    clinicianCleared: [], excluded: [],
+    clinicianCleared: [], excluded: [], scheduled: [],
     settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: cadence, daysToEstablish: settle },
     updatedAt: Date.now(),
   };
@@ -848,7 +891,9 @@ function finishWizard() {
     if (e === "reacts") {
       events.push({ id: uid(), childId: kid.id, allergen: a, day: addDays(-3, d),
                     kind: "reaction", dose: null, supersedes: null });
+      kid.scheduled.push(a);    // reacted foods stay on the plan, visibly flagged
     }
+    if (e === "trying") kid.scheduled.push(a);
     const dose = w.doses[a];
     if (dose && Number(dose.amount) > 0) {
       plans.push({
