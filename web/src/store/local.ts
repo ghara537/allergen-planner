@@ -1,5 +1,5 @@
-import { DEFAULT_SETTINGS, type ChildProfile, type DosePlan, type FoodEvent,
-         type Allergen, type Day } from "../engine/types.js";
+import { DEFAULT_SETTINGS, type ChildProfile, type DayOverride, type DosePlan,
+         type FoodEvent, type Allergen, type Day } from "../engine/types.js";
 import { formatDay, parseDay } from "../engine/daymath.js";
 
 /** Local-first. The device copy is the source of truth for rendering; the
@@ -12,6 +12,7 @@ export interface Store {
   children: ChildProfile[];
   events: FoodEvent[];
   dosePlans: DosePlan[];
+  dayOverrides: DayOverride[];
   activeChildId: string | null;
   lastSync: number;
   /** ids already accepted by the server, so we only push what is new. */
@@ -19,7 +20,7 @@ export interface Store {
 }
 
 const empty = (): Store => ({
-  familyKey: "", children: [], events: [], dosePlans: [],
+  familyKey: "", children: [], events: [], dosePlans: [], dayOverrides: [],
   activeChildId: null, lastSync: 0, pushed: [],
 });
 
@@ -88,3 +89,13 @@ export const rowToPlan = (r: any): DosePlan => ({
 });
 
 export const newDay = (d: Day) => d;
+
+export const overrideToRow = (o: DayOverride) => ({
+  id: o.id, child_id: o.childId, day: formatDay(o.day),
+  naps_json: JSON.stringify(o.naps), supersedes: o.supersedes, created_at: Date.now(),
+});
+
+export const rowToOverride = (r: any): DayOverride => ({
+  id: r.id, childId: r.child_id, day: parseDay(r.day),
+  naps: JSON.parse(r.naps_json ?? "[]"), supersedes: r.supersedes ?? null,
+});

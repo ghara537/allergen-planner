@@ -1,5 +1,6 @@
 import {
-  childToRow, eventToRow, planToRow, rowToChild, rowToEvent, rowToPlan, save, type Store,
+  childToRow, eventToRow, overrideToRow, planToRow, rowToChild, rowToEvent,
+  rowToOverride, rowToPlan, save, type Store,
 } from "./local.js";
 
 /** Push what is new, pull what changed. Append-only events make this a merge,
@@ -13,8 +14,9 @@ export async function sync(s: Store): Promise<{ store: Store; online: boolean }>
   try {
     const newEvents = s.events.filter((e) => !pushed.has(e.id));
     const newPlans = s.dosePlans.filter((p) => !pushed.has(p.id));
+    const newOv = s.dayOverrides.filter((o) => !pushed.has(o.id));
 
-    if (newEvents.length || newPlans.length || s.children.length) {
+    if (newEvents.length || newPlans.length || newOv.length || s.children.length) {
       const res = await fetch("/api/sync", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -23,17 +25,19 @@ export async function sync(s: Store): Promise<{ store: Store; online: boolean }>
           children: s.children.map(childToRow),
           events: newEvents.map(eventToRow),
           dosePlans: newPlans.map(planToRow),
+          dayOverrides: newOv.map(overrideToRow),
         }),
       });
       if (!res.ok) throw new Error(`sync ${res.status}`);
       for (const e of newEvents) pushed.add(e.id);
       for (const p of newPlans) pushed.add(p.id);
+      for (const o of newOv) pushed.add(o.id);
     }
 
     const res = await fetch(`/api/state?family=${encodeURIComponent(s.familyKey)}&since=0`);
     if (!res.ok) throw new Error(`state ${res.status}`);
     const remote = await res.json() as {
-      now: number; children: any[]; events: any[]; dosePlans: any[];
+      now: number; children: any[]; events: any[]; dosePlans: any[]; dayOverrides: any[];
     };
 
     const byId = <T extends { id: string }>(local: T[], incoming: T[]): T[] => {
@@ -47,6 +51,7 @@ export async function sync(s: Store): Promise<{ store: Store; online: boolean }>
       children: byId(s.children, remote.children.map(rowToChild)),
       events: byId(s.events, remote.events.map(rowToEvent)),
       dosePlans: byId(s.dosePlans, remote.dosePlans.map(rowToPlan)),
+      dayOverrides: byId(s.dayOverrides, (remote.dayOverrides ?? []).map(rowToOverride)),
       lastSync: remote.now,
       pushed: [...pushed],
     };

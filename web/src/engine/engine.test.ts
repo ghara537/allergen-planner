@@ -1,9 +1,10 @@
 import { addDays, daysBetween, day as D } from "./daymath.js";
-import { plan, statuses, amountOn, planFor, label, fmtAmount } from "./planner.js";
+import { plan, statuses, amountOn, planFor, label, fmtAmount,
+         timeline, napsFor, hhmm } from "./planner.js";
 import {
   ALLERGENS_BY_JURISDICTION, DEFAULT_SETTINGS,
   type Allergen, type ChildProfile, type ChildSettings, type Day,
-  type DosePlan, type FoodEvent, type RiskTier,
+  type DayOverride, type DosePlan, type FoodEvent, type NapSlot, type RiskTier,
 } from "./types.js";
 
 let passed = 0, failed = 0;
@@ -63,11 +64,11 @@ const tight = [ev("egg", D(2026, 9, 1)), ev("egg", D(2026, 9, 5))];
 check("4 days apart is not yet settled",
   statuses(profile(), tight, [], today).egg?.kind === "inProgress");
 check("settings are per child",
-  statuses(profile({ settings: { newAllergenCadenceDays: 5, daysToEstablish: 3 } }), tight, [], today)
+  statuses(profile({ settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: 5, daysToEstablish: 3 } }), tight, [], today)
     .egg?.kind === "established");
 
 console.log("\n== Cadence between new foods ==");
-const slow = profile({ settings: { newAllergenCadenceDays: 10, daysToEstablish: 21 } });
+const slow = profile({ settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: 10, daysToEstablish: 21 } });
 const started = [ev("peanut", addDays(-3, today))];
 check("too soon for a new food", one(slow, started).introduce?.allergen !== "egg");
 check("ready after the cadence",
@@ -142,6 +143,55 @@ const toddler = one(profile(), all, [], D(2029, 9, 14));
 check("nothing left to introduce", toddler.introduce === null);
 check("maintenance still due", toddler.maintenanceDue.length > 0);
 check("window closes after five years", one(profile(), all, [], D(2032, 9, 14)).maintenanceDue.length === 0);
+
+console.log("\n== Timeline ==");
+const naps: NapSlot[] = [
+  { startMin: 9 * 60, durationMin: 75 },
+  { startMin: 13 * 60 + 30, durationMin: 90 },
+];
+const tlArgs = { naps, history: sustained, childId: KID, day: today,
+                 dayStartMin: 6 * 60, dayEndMin: 20 * 60 };
+const tl = timeline({ plan: one(profile(), sustained), ...tlArgs });
+check("naps appear as blocks", tl.filter((b) => b.kind === "nap").length === 2);
+check("naps are numbered", tl.find((b) => b.kind === "nap")?.napIndex === 1);
+check("blocks come out in time order",
+  tl.every((b, i) => i === 0 || tl[i - 1]!.startMin <= b.startMin));
+check("feeds sit outside naps", tl.filter((b) => b.kind === "feed").every((f) =>
+  naps.every((n) => f.startMin >= n.startMin + n.durationMin || f.endMin <= n.startMin)));
+check("a new food gets a watch window",
+  tl.some((b) => b.kind === "observation"));
+const obs = tl.find((b) => b.kind === "observation")!;
+check("the watch window is two hours", obs.endMin - obs.startMin >= 110);
+
+const crowded = timeline({ plan: one(profile(), sustained), ...tlArgs,
+  naps: [{ startMin: 7 * 60, durationMin: 60 }] });
+check("fewer naps still places every food",
+  crowded.filter((b) => b.kind === "feed").length ===
+  tl.filter((b) => b.kind === "feed").length);
+
+const doneToday = [...sustained, ev("peanut", today)];
+const tlDone = timeline({ plan: one(profile(), doneToday), ...tlArgs, history: doneToday });
+check("a logged food reads as done",
+  tlDone.filter((b) => b.kind === "feed" && b.allergen === "peanut")
+        .every((b) => b.status === "done"));
+const tlMissed = timeline({ plan: one(profile(), sustained), ...tlArgs, nowMin: 23 * 60 });
+check("an unlogged feed reads as missed once its window passes",
+  tlMissed.some((b) => b.kind === "feed" && b.status === "missed"));
+const tlOpen = timeline({ plan: one(profile(), sustained), ...tlArgs, nowMin: 0 });
+check("and as due before then",
+  tlOpen.filter((b) => b.kind === "feed").every((b) => b.status !== "missed"));
+
+console.log("\n== Day overrides ==");
+const ov: DayOverride[] = [
+  { id: "o1", childId: KID, day: today, naps: [{ startMin: 600, durationMin: 30 }], supersedes: null },
+  { id: "o2", childId: KID, day: today, naps: [{ startMin: 660, durationMin: 45 }], supersedes: "o1" },
+];
+check("the newest override for a day wins",
+  napsFor(ov, { naps }, KID, today)[0]?.startMin === 660);
+check("another day falls back to the default",
+  napsFor(ov, { naps }, KID, D(2026, 9, 15))[0]?.startMin === 540);
+check("another child is unaffected", napsFor(ov, { naps }, "other", today).length === 2);
+check("clock formatting", hhmm(9 * 60) === "9am" && hhmm(13 * 60 + 30) === "1:30pm");
 
 console.log("\n== Determinism ==");
 const a1 = one(profile(), sustained), a2 = one(profile(), sustained);

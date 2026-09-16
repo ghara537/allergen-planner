@@ -47,3 +47,18 @@ CREATE TABLE IF NOT EXISTS dose_plans (
   created_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_plans_family ON dose_plans(family_id, created_at);
+
+-- What a particular day actually looked like, when it differed from the
+-- default nap schedule. Append-only: an edit supersedes, so two phones
+-- adjusting the same day converge instead of clobbering.
+CREATE TABLE IF NOT EXISTS day_overrides (
+  id         TEXT PRIMARY KEY,
+  family_id  TEXT NOT NULL,
+  child_id   TEXT NOT NULL,
+  day        TEXT NOT NULL,
+  naps_json  TEXT NOT NULL,
+  supersedes TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ov_family ON day_overrides(family_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ov_day ON day_overrides(child_id, day);

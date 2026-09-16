@@ -1,8 +1,8 @@
 import {
   ALLERGENS_BY_JURISDICTION, DEFAULT_CONFIG, DEFAULT_SETTINGS,
   type Allergen, type AllergenStatus, type ChildProfile, type Config,
-  type Day, type DayPlan, type Dose, type DosePlan, type FoodEvent,
-  type ScheduledItem,
+  type Day, type DayOverride, type DayPlan, type Dose, type DosePlan,
+  type FoodEvent, type ScheduledItem,
 } from "./types.js";
 import { addDays, compareDay, daysBetween } from "./daymath.js";
 
@@ -294,3 +294,109 @@ export function fmtAmount(d: Dose | null): string {
   const n = Number.isInteger(d.amount) ? String(d.amount) : String(round(d.amount));
   return d.unit ? `${n} ${d.unit}` : n;
 }
+
+// =========================================================================
+// Timeline. Pure, like everything else: naps and a day plan in, blocks out.
+// Feed windows are DERIVED from the gaps between naps - they are never
+// stored, so moving a nap moves the meals around it for free.
+// =========================================================================
+
+import type { NapSlot, TimelineBlock, FeedStatus } from "./types.js";
+
+const FEED_LEN = 30;          // how long a feed block is drawn
+const AFTER_WAKE = 15;        // a beat after waking before eating
+const OBSERVE = 120;          // [G] ASCIA: watch minutes to two hours
+
+/** Blocks for one day, in order. `nowMin` decides whether an unlogged feed
+ *  reads as still due or as missed; omit it for a past or future day. */
+export function timeline(args: {
+  plan: DayPlan;
+  naps: NapSlot[];
+  history: FoodEvent[];
+  childId: string;
+  day: Day;
+  dayStartMin: number;
+  dayEndMin: number;
+  nowMin?: number;
+}): TimelineBlock[] {
+  const { plan: p, naps, history, childId, day, dayStartMin, dayEndMin, nowMin } = args;
+  const sorted = [...naps].sort((a, b) => a.startMin - b.startMin);
+  const out: TimelineBlock[] = [];
+
+  sorted.forEach((n, i) => out.push({
+    kind: "nap", startMin: n.startMin, endMin: n.startMin + n.durationMin,
+    napIndex: i + 1, napDone: !!n.done,
+  }));
+
+  // Gaps: before the first nap, between naps, after the last.
+  const gaps: Array<[number, number]> = [];
+  let cursor = dayStartMin;
+  for (const n of sorted) {
+    if (n.startMin > cursor) gaps.push([cursor, n.startMin]);
+    cursor = Math.max(cursor, n.startMin + n.durationMin);
+  }
+  if (cursor < dayEndMin) gaps.push([cursor, dayEndMin]);
+
+  // The new food goes first - earlier in the day, so the watch window has
+  // room before sleep. Maintenance fills the rest in order.
+  const foods = [
+    ...(p.introduce ? [p.introduce] : []),
+    ...p.maintenanceDue,
+  ];
+
+  foods.forEach((f, i) => {
+    const gap = gaps[Math.min(i, gaps.length - 1)];
+    if (!gap) return;
+    // Stack extras inside the last gap rather than dropping them.
+    const overflow = Math.max(0, i - (gaps.length - 1));
+    const start = Math.min(gap[0] + AFTER_WAKE + overflow * (FEED_LEN + 10),
+                           Math.max(gap[0], gap[1] - FEED_LEN));
+    const end = Math.min(start + FEED_LEN, gap[1]);
+    out.push({
+      kind: "feed", startMin: start, endMin: end,
+      allergen: f.allergen, dose: f.dose, isNew: f.isNew,
+      status: feedStatus(f.allergen, history, childId, day, end, nowMin),
+    });
+    if (f.isNew) {
+      // Two hours from the END of the feed, not the start - conservative, and
+      // easier to explain than a window that overlaps the meal itself.
+      const obsEnd = end + OBSERVE;
+      out.push({
+        kind: "observation", startMin: end, endMin: obsEnd,
+        clashesWithNap: sorted.some((n) => n.startMin < obsEnd && n.startMin + n.durationMin > end),
+      });
+    }
+  });
+
+  return out.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+}
+
+function feedStatus(
+  a: Allergen | undefined, history: FoodEvent[], childId: string,
+  day: Day, endMin: number, nowMin?: number,
+): FeedStatus {
+  if (!a) return "due";
+  const same = history.filter((e) => e.childId === childId && e.allergen === a
+    && compareDay(e.day, day) === 0);
+  if (same.some((e) => e.kind === "reaction")) return "reacted";
+  if (same.some((e) => e.kind === "exposure")) return "done";
+  if (nowMin !== undefined && nowMin > endMin) return "missed";
+  return "due";
+}
+
+/** The naps in force for a day: the latest override for it, else the default. */
+export function napsFor(
+  overrides: DayOverride[], settings: { naps: NapSlot[] }, childId: string, day: Day,
+): NapSlot[] {
+  const superseded = new Set(overrides.map((o) => o.supersedes).filter(Boolean) as string[]);
+  const forDay = overrides
+    .filter((o) => !superseded.has(o.id) && o.childId === childId && compareDay(o.day, day) === 0);
+  return forDay.length ? forDay[forDay.length - 1]!.naps : settings.naps;
+}
+
+export const hhmm = (m: number) => {
+  const h = Math.floor(((m % 1440) + 1440) % 1440 / 60), mi = Math.round(m % 60);
+  const ampm = h < 12 ? "am" : "pm";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return mi === 0 ? `${h12}${ampm}` : `${h12}:${String(mi).padStart(2, "0")}${ampm}`;
+};

@@ -1,8 +1,9 @@
-import { plan, statuses, planFor, amountOn, label, fmtAmount } from "../engine/planner.js";
+import { plan, statuses, planFor, amountOn, label, fmtAmount,
+         timeline, napsFor, hhmm } from "../engine/planner.js";
 import {
   ALLERGENS_BY_JURISDICTION, DEFAULT_SETTINGS,
   type Allergen, type ChildProfile, type Day, type DayPlan, type DosePlan,
-  type FoodEvent, type RiskTier,
+  type FoodEvent, type NapSlot, type RiskTier, type TimelineBlock,
 } from "../engine/types.js";
 import { addDays, daysBetween, formatDay, parseDay, todayLocal } from "../engine/daymath.js";
 import { load, save, uid, type Store } from "../store/local.js";
@@ -41,7 +42,7 @@ const isTyping = () => {
   const el = document.activeElement;
   return !!el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
 };
-function maybeRender() { if (!isTyping() && signature() !== lastSig) render(); }
+function maybeRender() { if (!dragging && !isTyping() && signature() !== lastSig) render(); }
 
 function commit(mut: (s: Store) => void) {
   mut(store); save(store); render();
@@ -200,9 +201,13 @@ function wizardView(): string {
 
 // ------------------------------------------------------------------ today
 
+const PX_PER_MIN = 0.85;          // ~51px an hour: a nap reads as a real block
+const SNAP = 5;                   // minutes
+
 function todayView(c: ChildProfile): string {
   const d = today();
   const p = planFrom(c, d, d)[0]!;
+  const st = c.settings ?? DEFAULT_SETTINGS;
   const months = Math.floor(p.ageInDays / 30.44);
   let html = `<h1>${esc(c.name)}</h1><p class="sub">${months} months · ${formatDay(d)}</p>`;
 
@@ -215,45 +220,81 @@ function todayView(c: ChildProfile): string {
     return html;
   }
 
-  if (p.introduce) {
-    const i = p.introduce;
-    html += `<div class="card hero">
-      <div class="eyebrow">${i.isNew ? "New food today" : i.reactive ? "Building up" : "Continue"}</div>
-      <p class="big">${esc(label(i.allergen))}</p>
-      ${i.dose ? `<p class="dose">${esc(fmtAmount(i.dose))}</p>` : ""}
-      ${i.source ? `<p class="attrib">${esc(i.source)}</p>` : ""}
-      <div class="row">
-        <button class="primary" data-act="log" data-a="${i.allergen}">Done</button>
-        <button class="danger" data-act="react" data-a="${i.allergen}">Reaction</button>
-      </div></div>`;
-  } else {
-    html += `<div class="card"><div class="eyebrow">Nothing new today</div>
-      <p class="note">The next food is spaced out. Anything below still needs keeping up.</p></div>`;
-  }
+  const naps = napsFor(store.dayOverrides, st, c.id, d);
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  const blocks = timeline({ plan: p, naps, history: store.events, childId: c.id, day: d,
+                            dayStartMin: st.dayStartMin, dayEndMin: st.dayEndMin, nowMin });
 
-  if (p.maintenanceDue.length) {
-    html += `<h2>Keep in the diet</h2><div class="card"><ul class="list">` +
-      p.maintenanceDue.map((m) => {
-        const last = lastDay(c.id, m.allergen);
-        const gap = last ? daysBetween(last, d) : null;
-        return `<li><span>${esc(label(m.allergen))}${m.dose ? ` <span class="when">· ${esc(fmtAmount(m.dose))}</span>` : ""}
-            <span class="when"> · ${gap === null ? "never" : `${gap}d ago`}</span></span>
-          <button class="ghost sm" data-act="log" data-a="${m.allergen}">Done</button></li>`;
-      }).join("") + `</ul></div>`;
-  }
+  const doneNaps = naps.filter((n) => n.done).length;
+  const plannedMin = naps.reduce((t, n) => t + n.durationMin, 0);
+  const doneMin = naps.filter((n) => n.done).reduce((t, n) => t + n.durationMin, 0);
+  html += `<div class="napbar">
+    <span><b>${doneNaps}</b> of ${naps.length} naps</span>
+    <span><b>${Math.round(doneMin / 60 * 10) / 10}h</b> of ${Math.round(plannedMin / 60 * 10) / 10}h slept</span>
+    <button class="ghost sm" data-act="add-nap">+ nap</button>
+  </div>`;
+
+  html += renderTimeline(blocks, st.dayStartMin, st.dayEndMin, nowMin);
 
   for (const n of p.notes) html += `<div class="card warn"><p class="note">${esc(n)}</p></div>`;
-  html += `<div class="row"><button class="ghost" data-act="backfill">Log for another day</button></div>`;
+  html += `<div class="row">
+    <button class="ghost" data-act="backfill">Log another day</button>
+    <button class="ghost" data-act="reset-naps">Reset naps</button></div>`;
   return html;
+}
+
+function renderTimeline(blocks: TimelineBlock[], from: number, to: number, nowMin: number): string {
+  const h = (to - from) * PX_PER_MIN;
+  const y = (m: number) => (m - from) * PX_PER_MIN;
+
+  let hours = "";
+  for (let m = Math.ceil(from / 60) * 60; m <= to; m += 60) {
+    hours += `<div class="hour" style="top:${y(m)}px"><span>${esc(hhmm(m))}</span></div>`;
+  }
+
+  const now = nowMin >= from && nowMin <= to
+    ? `<div class="nowline" style="top:${y(nowMin)}px"></div>` : "";
+
+  const items = blocks.map((b, i) => {
+    const top = y(Math.max(b.startMin, from));
+    const hgt = Math.max(16, y(Math.min(b.endMin, to)) - top);
+    const time = `${hhmm(b.startMin)}–${hhmm(b.endMin)}`;
+
+    if (b.kind === "observation") {
+      return `<div class="blk obs${b.clashesWithNap ? " clash" : ""}"
+        style="top:${top}px;height:${hgt}px">
+        <span>watch ${b.clashesWithNap ? "· runs into a nap" : ""}</span></div>`;
+    }
+    if (b.kind === "nap") {
+      return `<div class="blk nap${b.napDone ? " done" : ""}" data-drag="nap"
+        data-i="${(b.napIndex ?? 1) - 1}" style="top:${top}px;height:${hgt}px">
+        <div class="grip top" data-edge="top"></div>
+        <div class="blk-in">
+          <b>Nap ${b.napIndex}</b>
+          <span class="t">${esc(time)}</span>
+          <button class="tick" data-act="nap-done" data-i="${(b.napIndex ?? 1) - 1}"
+            aria-label="mark nap slept">${b.napDone ? "✓" : "○"}</button>
+        </div>
+        <div class="grip bottom" data-edge="bottom"></div></div>`;
+    }
+    const s = b.status ?? "due";
+    return `<div class="blk feed ${s}" style="top:${top}px;height:${hgt}px">
+      <div class="blk-in">
+        <b>${esc(label(b.allergen!))}${b.isNew ? " · new" : ""}</b>
+        <span class="t">${esc(hhmm(b.startMin))}${b.dose ? " · " + esc(fmtAmount(b.dose)) : ""}</span>
+        ${s === "done" ? `<span class="tick on">✓</span>`
+          : s === "reacted" ? `<span class="tick bad">!</span>`
+          : `<button class="tick" data-act="log" data-a="${b.allergen}" aria-label="mark eaten">○</button>`}
+      </div></div>`;
+  }).join("");
+
+  return `<div class="tl" style="height:${h}px">${hours}${now}${items}</div>
+    <p class="status">Drag a nap to move it, or its top and bottom edges to change how long.
+      Changes apply to today only and everyone on the family link sees them.</p>`;
 }
 
 function planFrom(c: ChildProfile, from: Day, through: Day): DayPlan[] {
   return plan({ profile: c, history: store.events, dosePlans: store.dosePlans, from, through });
-}
-function lastDay(childId: string, a: Allergen): Day | null {
-  const ds = store.events.filter((e) => e.childId === childId && e.allergen === a
-    && e.kind === "exposure").map((e) => e.day);
-  return ds.length ? ds.reduce((x, y) => (daysBetween(x, y) >= 0 ? y : x)) : null;
 }
 
 // --------------------------------------------------------------- schedule
@@ -376,6 +417,29 @@ function setupView(c: ChildProfile): string {
     <div class="row"><button class="primary" data-act="save-settings">Save</button></div>
   </div>
 
+  <h2>Usual naps</h2>
+  <div class="card">
+    ${s.naps.map((n, i) => `<div class="grid2">
+      <div><label for="ns-${i}">Nap ${i + 1} starts</label>
+        <input id="ns-${i}" type="time" value="${esc(toTime(n.startMin))}"></div>
+      <div><label for="nd-${i}">For (minutes)</label>
+        <input id="nd-${i}" inputmode="numeric" value="${n.durationMin}"></div>
+    </div>`).join("")}
+    <div class="row">
+      <button class="ghost" data-act="naps-fewer">Fewer</button>
+      <button class="ghost" data-act="naps-more">More</button>
+    </div>
+    <div class="grid2">
+      <div><label for="ds">Day starts</label>
+        <input id="ds" type="time" value="${esc(toTime(s.dayStartMin))}"></div>
+      <div><label for="de">Day ends</label>
+        <input id="de" type="time" value="${esc(toTime(s.dayEndMin))}"></div>
+    </div>
+    <p class="note">This is the usual shape. Today can differ without changing it —
+      adjust the blocks on the Today tab instead.</p>
+    <div class="row"><button class="primary" data-act="save-naps">Save</button></div>
+  </div>
+
   <h2>Children</h2>
   <div class="card"><ul class="list">${store.children.map((k) =>
     `<li><span>${esc(k.name)} <span class="when">· ${formatDay(k.birthDate)}</span></span>
@@ -395,6 +459,8 @@ function wire() {
     b.onclick = () => { tab = b.dataset.tab as Tab; editing = null; render(); });
   root().querySelectorAll<HTMLButtonElement>("[data-act]").forEach((b) =>
     b.onclick = () => handle(b.dataset.act!, b.dataset));
+  const c = activeChild();
+  if (c && tab === "today" && !editing && !wiz) wireDrag(c);
 }
 
 function captureWizard() {
@@ -440,7 +506,8 @@ function handle(act: string, data: DOMStringMap) {
       const cad = num("cad2", 5), set = num("set2", 21);
       commit((s) => {
         const k = s.children.find((x) => x.id === c.id)!;
-        k.settings = { newAllergenCadenceDays: cad, daysToEstablish: set };
+        k.settings = { ...(k.settings ?? DEFAULT_SETTINGS),
+                       newAllergenCadenceDays: cad, daysToEstablish: set };
       });
       break;
     }
@@ -471,6 +538,51 @@ function handle(act: string, data: DOMStringMap) {
       addEvent(c.id, a.trim() as Allergen, parseDay(when), "exposure"); break;
     }
 
+    case "add-nap": {
+      if (!c) return;
+      const naps = napsToday(c);
+      const last = naps[naps.length - 1];
+      const start = last ? Math.min(last.startMin + last.durationMin + 120,
+        (c.settings ?? DEFAULT_SETTINGS).dayEndMin - 45) : 9 * 60;
+      writeNaps(c, [...naps, { startMin: start, durationMin: 45 }]);
+      break;
+    }
+    case "nap-done": {
+      if (!c) return;
+      const naps = napsToday(c);
+      const n = naps[Number(data.i)];
+      if (n) { n.done = !n.done; writeNaps(c, naps); }
+      break;
+    }
+    case "reset-naps": {
+      if (!c) return;
+      if (!confirm("Put today's naps back to the usual schedule?")) return;
+      writeNaps(c, (c.settings ?? DEFAULT_SETTINGS).naps.map((n) => ({ ...n })));
+      break;
+    }
+    case "naps-more": case "naps-fewer": {
+      if (!c) return;
+      const cur = readNapInputs(c);
+      const naps = act === "naps-more"
+        ? [...cur, { startMin: Math.min((cur[cur.length - 1]?.startMin ?? 480) + 180, 19 * 60), durationMin: 45 }]
+        : cur.slice(0, -1);
+      commit((s) => {
+        const k = s.children.find((x) => x.id === c.id)!;
+        k.settings = { ...(k.settings ?? DEFAULT_SETTINGS), naps };
+      });
+      break;
+    }
+    case "save-naps": {
+      if (!c) return;
+      const naps = readNapInputs(c);
+      const ds = fromTime(val("ds"), 6 * 60), de = fromTime(val("de"), 20 * 60);
+      commit((s) => {
+        const k = s.children.find((x) => x.id === c.id)!;
+        k.settings = { ...(k.settings ?? DEFAULT_SETTINGS), naps,
+                       dayStartMin: ds, dayEndMin: Math.max(de, ds + 60) };
+      });
+      break;
+    }
     case "edit": editing = data.a as Allergen; render(); break;
     case "edit-cancel": editing = null; render(); break;
     case "edit-clear": {
@@ -508,6 +620,14 @@ function handle(act: string, data: DOMStringMap) {
   }
 }
 
+function readNapInputs(c: ChildProfile): NapSlot[] {
+  const cur = (c.settings ?? DEFAULT_SETTINGS).naps;
+  return cur.map((n, i) => ({
+    startMin: fromTime(val(`ns-${i}`), n.startMin),
+    durationMin: Math.max(15, Number(val(`nd-${i}`)) || n.durationMin),
+  }));
+}
+
 function addEvent(childId: string, a: Allergen, day: Day, kind: FoodEvent["kind"]) {
   commit((s) => {
     s.events.push({ id: uid(), childId, allergen: a, day, kind, dose: null, supersedes: null });
@@ -526,7 +646,7 @@ function finishWizard() {
     id: uid(), name: w.name.trim(), birthDate: parseDay(w.dob), riskTier: w.risk,
     jurisdiction: "us", readinessConfirmedOn: w.ready ? d : null,
     clinicianCleared: [], excluded: [],
-    settings: { newAllergenCadenceDays: cadence, daysToEstablish: settle },
+    settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: cadence, daysToEstablish: settle },
   };
   const events: FoodEvent[] = [];
   const plans: DosePlan[] = [];
@@ -565,6 +685,98 @@ function finishWizard() {
     s.children.push(kid); s.activeChildId = kid.id;
     s.events.push(...events); s.dosePlans.push(...plans);
   });
+}
+
+// ------------------------------------------------------------------- naps
+
+const toTime = (m: number) =>
+  `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const fromTime = (v: string, dflt: number) => {
+  const [h, mi] = v.split(":").map(Number);
+  return Number.isFinite(h) && Number.isFinite(mi) ? h! * 60 + mi! : dflt;
+};
+
+/** Today's naps, written as a superseding override so the default shape is
+ *  untouched and two phones adjusting the same day converge. */
+function writeNaps(c: ChildProfile, naps: NapSlot[]) {
+  const d = today();
+  const prev = store.dayOverrides.filter((o) => o.childId === c.id
+    && formatDay(o.day) === formatDay(d));
+  const live = prev[prev.length - 1];
+  commit((s) => {
+    s.dayOverrides.push({ id: uid(), childId: c.id, day: d,
+                          naps: naps.map((n) => ({ ...n })), supersedes: live?.id ?? null });
+  });
+}
+
+const napsToday = (c: ChildProfile): NapSlot[] =>
+  napsFor(store.dayOverrides, c.settings ?? DEFAULT_SETTINGS, c.id, today())
+    .map((n) => ({ ...n }));
+
+// ------------------------------------------------------------------- drag
+// Pointer Events so mouse and touch take the same path. The block follows the
+// finger live and nothing is written until release, so a drag that is really
+// a scroll costs nothing.
+
+let dragging = false;
+
+function wireDrag(c: ChildProfile) {
+  root().querySelectorAll<HTMLElement>('[data-drag="nap"]').forEach((el) => {
+    el.addEventListener("pointerdown", (ev) => startDrag(ev, el, c));
+  });
+}
+
+function startDrag(ev: PointerEvent, el: HTMLElement, c: ChildProfile) {
+  const target = ev.target as HTMLElement;
+  if (target.closest("button")) return;                 // the tick is not a handle
+  const edge = target.dataset.edge as "top" | "bottom" | undefined;
+  const i = Number(el.dataset.i);
+  const naps = napsToday(c);
+  const nap = naps[i];
+  if (!nap) return;
+
+  ev.preventDefault();
+  el.setPointerCapture(ev.pointerId);
+  dragging = true;
+  el.classList.add("dragging");
+
+  const startY = ev.clientY;
+  const origStart = nap.startMin, origDur = nap.durationMin;
+  const st = c.settings ?? DEFAULT_SETTINGS;
+  const snap = (m: number) => Math.round(m / SNAP) * SNAP;
+
+  const move = (e: PointerEvent) => {
+    const delta = snap((e.clientY - startY) / PX_PER_MIN);
+    let start = origStart, dur = origDur;
+    if (edge === "top") {
+      start = Math.min(origStart + delta, origStart + origDur - 15);
+      dur = origDur - (start - origStart);
+    } else if (edge === "bottom") {
+      dur = Math.max(15, origDur + delta);
+    } else {
+      start = origStart + delta;
+    }
+    start = Math.max(st.dayStartMin, Math.min(start, st.dayEndMin - dur));
+    dur = Math.min(dur, st.dayEndMin - start);
+    nap.startMin = start; nap.durationMin = dur;
+    el.style.top = `${(start - st.dayStartMin) * PX_PER_MIN}px`;
+    el.style.height = `${dur * PX_PER_MIN}px`;
+    const t = el.querySelector(".t");
+    if (t) t.textContent = `${hhmm(start)}\u2013${hhmm(start + dur)}`;
+  };
+
+  const end = () => {
+    el.removeEventListener("pointermove", move);
+    el.removeEventListener("pointerup", end);
+    el.removeEventListener("pointercancel", end);
+    el.classList.remove("dragging");
+    dragging = false;
+    if (nap.startMin !== origStart || nap.durationMin !== origDur) writeNaps(c, naps);
+  };
+
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
 }
 
 // -------------------------------------------------------------------- boot

@@ -51,7 +51,32 @@ export interface ChildProfile {
   settings: ChildSettings;
 }
 
+/** Minutes from midnight. A nap is a position on a day, not a timestamp -
+ *  same reasoning as Day not being a Date. */
+export interface NapSlot {
+  startMin: number;
+  durationMin: number;
+  /** Only meaningful on a day override: this nap actually happened. */
+  done?: boolean;
+}
+
+/** What today looked like, when it differed from the default. Append-only:
+ *  an edit writes a new row superseding the old, so two phones adjusting the
+ *  same day converge instead of clobbering. */
+export interface DayOverride {
+  id: string;
+  childId: string;
+  day: Day;
+  naps: NapSlot[];
+  supersedes: string | null;
+}
+
 export interface ChildSettings {
+  /** The usual shape of a day. Today can deviate without changing this. */
+  naps: NapSlot[];
+  /** Window the timeline draws, minutes from midnight. */
+  dayStartMin: number;
+  dayEndMin: number;
   /** Days between STARTING new allergens. [C] convention, you choose it. */
   newAllergenCadenceDays: number;
   /** Days of sustained exposure - first to last - before a food counts as
@@ -60,9 +85,34 @@ export interface ChildSettings {
 }
 
 export const DEFAULT_SETTINGS: ChildSettings = {
+  naps: [
+    { startMin: 9 * 60, durationMin: 75 },
+    { startMin: 13 * 60 + 30, durationMin: 90 },
+  ],
+  dayStartMin: 6 * 60,
+  dayEndMin: 20 * 60,
   newAllergenCadenceDays: 5,
   daysToEstablish: 21,
 };
+
+export type BlockKind = "nap" | "feed" | "observation";
+export type FeedStatus = "done" | "due" | "missed" | "reacted";
+
+export interface TimelineBlock {
+  kind: BlockKind;
+  startMin: number;
+  endMin: number;
+  /** naps only - 1-based, for "nap 2 of 3" */
+  napIndex?: number;
+  napDone?: boolean;
+  /** feeds only */
+  allergen?: Allergen;
+  dose?: Dose | null;
+  isNew?: boolean;
+  status?: FeedStatus;
+  /** observation only - true when the watch window runs into a nap */
+  clashesWithNap?: boolean;
+}
 
 export type EventKind = "exposure" | "reaction" | "skippedDeliberate";
 

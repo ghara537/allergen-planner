@@ -11,6 +11,7 @@ interface Payload {
   children?: Array<Record<string, unknown>>;
   events?: Array<Record<string, unknown>>;
   dosePlans?: Array<Record<string, unknown>>;
+  dayOverrides?: Array<Record<string, unknown>>;
 }
 
 /** POST /api/sync
@@ -60,6 +61,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     ).bind(p.id, fam, p.child_id, p.allergen, p.effective_from, p.start_amount,
            p.unit ?? "", p.increment ?? 0, p.increment_mode ?? "add", p.every_days ?? 7,
            p.reactive ?? 0, p.source ?? "", p.supersedes ?? null, Number(p.created_at ?? now)));
+  }
+
+  for (const o of body.dayOverrides ?? []) {
+    stmts.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO day_overrides
+         (id, family_id, child_id, day, naps_json, supersedes, created_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7)`
+    ).bind(o.id, fam, o.child_id, o.day, o.naps_json,
+           o.supersedes ?? null, Number(o.created_at ?? now)));
   }
 
   if (stmts.length) await env.DB.batch(stmts);
