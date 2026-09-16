@@ -13,6 +13,28 @@ type Tab = "today" | "schedule" | "foods" | "setup";
 let store: Store = load();
 let tab: Tab = "today";
 let online = false;
+let lastSig = "";
+
+/** Re-rendering blows away the DOM, so a background sync must never do it
+ *  while someone is typing, and never when nothing actually changed. */
+function signature(): string {
+  return JSON.stringify([
+    tab, online, store.familyKey, store.activeChildId,
+    store.children, store.events.length, store.prescriptions.length,
+  ]);
+}
+
+function isTyping(): boolean {
+  const el = document.activeElement;
+  return !!el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+}
+
+/** Background path: only paint when it is safe and something moved. */
+function maybeRender() {
+  if (isTyping()) return;
+  if (signature() === lastSig) return;
+  render();
+}
 
 const root = () => document.getElementById("app")!;
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) =>
@@ -20,7 +42,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) =>
 
 function commit(mut: (s: Store) => void) {
   mut(store); save(store); render();
-  void sync(store).then((r) => { store = r.store; online = r.online; render(); });
+  void sync(store).then((r) => { store = r.store; online = r.online; maybeRender(); });
 }
 
 const activeChild = (): ChildProfile | null =>
@@ -38,6 +60,7 @@ function render() {
   const c = activeChild();
   root().innerHTML = !store.familyKey || !c ? setupView() : viewFor(tab, c);
   wire();
+  lastSig = signature();
 }
 
 function viewFor(t: Tab, c: ChildProfile): string {
@@ -377,8 +400,10 @@ export function start() {
   const key = new URLSearchParams(location.search).get("family");
   if (key && key !== store.familyKey) { store.familyKey = key; save(store); }
   render();
-  void sync(store).then((r) => { store = r.store; online = r.online; render(); });
+  void sync(store).then((r) => { store = r.store; online = r.online; maybeRender(); });
   setInterval(() => void sync(store).then((r) => {
-    store = r.store; online = r.online; render();
+    store = r.store; online = r.online; maybeRender();
   }), 30_000);
+  // Typing is the one time a repaint is unacceptable, so catch up on blur.
+  document.addEventListener("focusout", () => setTimeout(maybeRender, 0));
 }
