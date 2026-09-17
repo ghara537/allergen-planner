@@ -50,6 +50,10 @@ export interface ChildProfile {
   /** Foods the parent has explicitly put on the plan. These come round on
    *  their own cadence instead of waiting their turn in the new-food queue. */
   scheduled: Allergen[];
+  /** A count the parent asserted directly, and when. Anything logged after
+   *  `asOf` is added to it - so the number can be set to whatever is true
+   *  without inventing events that never happened. */
+  exposureCounts: Partial<Record<Allergen, { count: number; asOf: Day }>>;
   /** Set during the walkthrough, editable later. */
   settings: ChildSettings;
   /** When this profile last actually changed. Child rows are the one mutable
@@ -89,6 +93,9 @@ export interface ChildSettings {
   /** Days of sustained exposure - first to last - before a food counts as
    *  settled. [C] no guideline basis; this is your call. */
   daysToEstablish: number;
+  /** And how many exposures. A food is settled only when it clears BOTH, so
+   *  the colour on the Foods list and the engine's idea of settled agree. */
+  exposuresToSettle: number;
 }
 
 export const DEFAULT_SETTINGS: ChildSettings = {
@@ -100,6 +107,7 @@ export const DEFAULT_SETTINGS: ChildSettings = {
   dayEndMin: 20 * 60,
   newAllergenCadenceDays: 5,
   daysToEstablish: 21,
+  exposuresToSettle: 5,
 };
 
 export type BlockKind = "nap" | "feed" | "observation";

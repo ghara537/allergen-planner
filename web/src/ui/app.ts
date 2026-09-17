@@ -1,4 +1,4 @@
-import { plan, statuses, planFor, amountOn, label, fmtAmount, fmtDay,
+import { plan, statuses, planFor, amountOn, label, fmtAmount, fmtDay, exposureCount,
          timeline, napsFor, hhmm, lastReaction } from "../engine/planner.js";
 import {
   ALLERGENS_BY_JURISDICTION, DEFAULT_SETTINGS,
@@ -23,6 +23,9 @@ let logMonth: Day | null = null;
 /** "idle" before a link is entered, "looking" while the first pull runs,
  *  "found" once we know what is on the other end. */
 let connect: "idle" | "looking" | "found" = "idle";
+/** The timeline is kept, not deleted - it is just no longer the default. */
+let todayMode: "list" | "timeline" =
+  (localStorage.getItem("allergen-planner/todayMode") as "list" | "timeline") ?? "list";
 
 /** Walkthrough state. Lives only until it is committed. */
 let wiz: null | {
@@ -276,7 +279,13 @@ function todayView(c: ChildProfile): string {
     <button class="ghost sm" data-act="add-nap">+ nap</button>
   </div>`;
 
-  html += renderTimeline(blocks, st.dayStartMin, st.dayEndMin, nowMin);
+  html += `<div class="seg viewtoggle">
+    <button class="${todayMode === "list" ? "on" : ""}" data-act="mode-list">List</button>
+    <button class="${todayMode === "timeline" ? "on" : ""}" data-act="mode-timeline">Timeline</button>
+  </div>`;
+  html += todayMode === "timeline"
+    ? renderTimeline(blocks, st.dayStartMin, st.dayEndMin, nowMin)
+    : renderNapList(naps);
 
   const everReacted = setOf(c)
     .map((a) => [a, lastReaction(a, store.events, c.id, d)] as const)
@@ -298,12 +307,17 @@ function todayView(c: ChildProfile): string {
             <input type="checkbox" data-act="toggle" data-a="${f.allergen}"
               data-d="${formatDay(d)}"${done ? " checked" : ""}${bad ? " disabled" : ""}>
             <span>${esc(label(f.allergen))}${f.isNew ? ` <span class="pill">new</span>` : ""}
-              ${f.dose ? `<span class="when"> · ${esc(fmtAmount(f.dose))}</span>` : ""}
               ${bad ? `<span class="pill stop">reacted today</span>`
                 : f.reactedOn ? `<span class="pill over" title="reacted before">⚠ ${esc(fmtDay(f.reactedOn))}</span>` : ""}
-            </span></label></li>`;
+            </span></label>
+          <input class="amt" value="${f.dose ? esc(String(f.dose.amount)) : ""}"
+            placeholder="${f.dose ? "" : "amount"}" inputmode="decimal"
+            data-act="set-amount" data-a="${f.allergen}" aria-label="${esc(label(f.allergen))} amount">
+          <span class="unit">${f.dose ? esc(f.dose.unit) : ""}</span></li>`;
       }).join("") + `</ul>`
-    : `<p class="note">Nothing due today. The next food is spaced out.</p>`}</div>`;
+    : `<p class="note">Nothing due today. The next food is spaced out.</p>`}
+    <div class="row"><button class="ghost" data-act="add-food">+ Add a food to today</button></div>
+    </div>`;
 
   for (const n of p.notes) {
     if (n.includes("caused a reaction")) continue;   // already shown above
@@ -326,6 +340,24 @@ function todayView(c: ChildProfile): string {
     <button class="ghost" data-act="open-log">🗓 Another day</button>
     <button class="ghost" data-act="reset-naps">Reset naps</button></div>`;
   return html;
+}
+
+function renderNapList(naps: NapSlot[]): string {
+  const rows = naps.map((n, i) => `<li class="naprow">
+    <input class="tm" type="time" value="${esc(toTime(n.startMin))}"
+      data-act="nap-time" data-i="${i}" aria-label="nap ${i + 1} start">
+    <span class="for">for</span>
+    <input class="mins" inputmode="numeric" value="${n.durationMin}"
+      data-act="nap-len" data-i="${i}" aria-label="nap ${i + 1} minutes">
+    <span class="for">min</span>
+    <label class="check tap tick-only">
+      <input type="checkbox" data-act="nap-done" data-i="${i}"${n.done ? " checked" : ""}
+        aria-label="nap ${i + 1} slept"></label>
+    <button class="ghost sm" data-act="nap-del" data-i="${i}" aria-label="remove nap">✕</button>
+  </li>`).join("");
+  return `<div class="card"><ul class="list naps">${rows ||
+      `<li><span class="note">No naps today.</span></li>`}</ul>
+    <div class="row"><button class="ghost" data-act="add-nap">+ Add a nap</button></div></div>`;
 }
 
 function renderTimeline(blocks: TimelineBlock[], from: number, to: number, nowMin: number): string {
@@ -411,21 +443,32 @@ function scheduleView(c: ChildProfile): string {
 function foodsView(c: ChildProfile): string {
   const d = today();
   const st = statuses(c, store.events, store.dosePlans, d);
+  const need = c.settings?.exposuresToSettle ?? 5;
+
   const items = setOf(c).map((a) => {
+    const n = exposureCount(a, store.events, c, d);
+    const reacted = lastReaction(a, store.events, c.id, d);
+    const excluded = c.excluded.includes(a);
     const s = st[a];
-    let pill = `<span class="pill">not started</span>`;
-    if (s?.kind === "excluded") pill = `<span class="pill stop">skipped</span>`;
-    else if (s?.kind === "reactedBefore") pill = `<span class="pill stop">⚠ ${esc(fmtDay(s.on))}</span>`;
-    else if (s?.kind === "onDosePlan") pill = `<span class="pill ${s.reactive ? "over" : ""}">${
-      esc(fmtAmount({ amount: s.amount, unit: s.unit }))}</span>`;
-    else if (s?.kind === "established") pill = `<span class="pill">settled</span>`;
-    else if (s?.kind === "inProgress") pill = `<span class="pill over">${s.exposures} logged</span>`;
-    return `<li><span>${esc(label(a))}</span><span class="rt">${pill}
-      <button class="ghost sm" data-act="edit" data-a="${a}">Edit</button></span></li>`;
+    // Everything starts amber. Green once it has cleared the count with no
+    // reaction; brick if it ever reacted; grey if you do not eat it.
+    const tone = excluded ? "off" : reacted ? "bad"
+      : s?.kind === "established" || n >= need ? "good" : "warnt";
+    return `<li class="foodrow ${tone}">
+      <span class="nm">${esc(label(a))}
+        ${reacted ? `<span class="pill stop">⚠ ${esc(fmtDay(reacted))}</span>` : ""}
+        ${excluded ? `<span class="pill">not eaten</span>` : ""}</span>
+      <input class="cnt" inputmode="numeric" value="${n}"
+        data-act="set-count" data-a="${a}" aria-label="${esc(label(a))} exposures">
+      <span class="of">of ${need}</span>
+      <button class="ghost sm" data-act="edit" data-a="${a}">Edit</button></li>`;
   }).join("");
+
   return `<h1>Foods</h1>
-    <p class="sub">The app never suggests an amount. Anything shown here is what you entered.</p>
-    <div class="card"><ul class="list">${items}</ul></div>`;
+    <p class="sub">Exposures so far. Type over a number to correct it — the count
+      carries on from whatever you set. Green once a food clears ${need} with no reaction.</p>
+    <div class="card"><ul class="list foods">${items}</ul></div>
+    <p class="status">The app never suggests an amount. Anything shown is what you entered.</p>`;
 }
 
 // -------------------------------------------------------------------- log
@@ -617,11 +660,18 @@ function wire() {
   root().querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
     b.onclick = () => { tab = b.dataset.tab as Tab; editing = null; render(); });
   root().querySelectorAll<HTMLElement>("[data-act]").forEach((b) => {
-    if (b instanceof HTMLInputElement && b.type === "checkbox") {
-      b.onchange = () => handle(b.dataset.act!, b.dataset);
-    } else {
-      b.onclick = () => handle(b.dataset.act!, b.dataset);
-    }
+    const isInput = b instanceof HTMLInputElement || b instanceof HTMLSelectElement;
+    const isCheck = b instanceof HTMLInputElement && b.type === "checkbox";
+    const f = b as unknown as Field;
+    if (isCheck) b.onchange = () => handle(b.dataset.act!, b.dataset, f);
+    else if (isInput) {
+      // Commit typed values on blur and on Enter, never per keystroke - a
+      // render mid-word would take the field away.
+      b.onchange = () => handle(b.dataset.act!, b.dataset, f);
+      b.onkeydown = (e) => {
+        if ((e as KeyboardEvent).key === "Enter") (b as HTMLInputElement).blur();
+      };
+    } else b.onclick = () => handle(b.dataset.act!, b.dataset, f);
   });
   const c = activeChild();
   if (c && tab === "today" && !editing && !wiz) wireDrag(c);
@@ -644,7 +694,10 @@ function captureWizard() {
   if (w.step === 3) { w.cadence = val("cad") || w.cadence; w.settle = val("set") || w.settle; }
 }
 
-function handle(act: string, data: DOMStringMap) {
+type Field = { value?: string };
+
+function handle(act: string, data: DOMStringMap, el?: Field) {
+  const fieldValue = () => el?.value ?? "";
   const c = activeChild();
   switch (act) {
     case "begin": {
@@ -756,6 +809,69 @@ function handle(act: string, data: DOMStringMap) {
       break;
     }
 
+    case "mode-list": todayMode = "list";
+      localStorage.setItem("allergen-planner/todayMode", "list"); render(); break;
+    case "mode-timeline": todayMode = "timeline";
+      localStorage.setItem("allergen-planner/todayMode", "timeline"); render(); break;
+
+    case "nap-time": case "nap-len": {
+      if (!c) return;
+      const naps = napsToday(c);
+      const n = naps[Number(data.i)];
+      if (!n) return;
+      if (act === "nap-time") n.startMin = fromTime(fieldValue(), n.startMin);
+      else n.durationMin = Math.max(5, Number(fieldValue()) || n.durationMin);
+      writeNaps(c, naps); break;
+    }
+    case "nap-del": {
+      if (!c) return;
+      const naps = napsToday(c);
+      naps.splice(Number(data.i), 1);
+      writeNaps(c, naps); break;
+    }
+    case "set-count": {
+      if (!c) return;
+      const a = data.a as Allergen;
+      const v = Math.max(0, Math.round(Number(fieldValue())));
+      if (!Number.isFinite(v)) return;
+      commit((s) => {
+        const k = s.children.find((x) => x.id === c.id)!;
+        k.exposureCounts = { ...(k.exposureCounts ?? {}), [a]: { count: v, asOf: today() } };
+      });
+      break;
+    }
+    case "set-amount": {
+      if (!c) return;
+      const a = data.a as Allergen;
+      const amount = Number(fieldValue());
+      const prev = planFor(store.dosePlans, a, today());
+      if (!Number.isFinite(amount) || amount <= 0) return;
+      if (prev && amountOn(prev, today(), store.events).amount === amount) return;
+      commit((s) => {
+        s.dosePlans.push({
+          id: uid(), childId: c.id, allergen: a, effectiveFrom: today(),
+          startAmount: amount, unit: prev?.unit ?? "", increment: prev?.increment ?? 0,
+          incrementMode: prev?.incrementMode ?? "add", everyDays: prev?.everyDays ?? 7,
+          feedEveryDays: prev?.feedEveryDays ?? 1, reactive: prev?.reactive ?? false,
+          source: prev?.source ?? "", supersedes: prev?.id ?? null,
+        });
+      });
+      break;
+    }
+    case "add-food": {
+      if (!c) return;
+      const pool = setOf(c).filter((a) => !c.excluded.includes(a));
+      const pick = prompt("Add which food to today?\n\n" + pool.map(label).join(", "));
+      if (!pick) return;
+      const a = pool.find((x) => label(x).toLowerCase() === pick.trim().toLowerCase()
+        || x.toLowerCase() === pick.trim().toLowerCase());
+      if (!a) { alert("Didn't recognise that one."); return; }
+      commit((s) => {
+        const k = s.children.find((x) => x.id === c.id)!;
+        k.scheduled = [...new Set([...(k.scheduled ?? []), a])];
+      });
+      break;
+    }
     case "add-nap": {
       if (!c) return;
       const naps = napsToday(c);
@@ -868,7 +984,7 @@ function finishWizard() {
   const kid: ChildProfile = {
     id: uid(), name: w.name.trim(), birthDate: parseDay(w.dob), riskTier: w.risk,
     jurisdiction: "us", readinessConfirmedOn: w.ready ? d : null,
-    clinicianCleared: [], excluded: [], scheduled: [],
+    clinicianCleared: [], excluded: [], scheduled: [], exposureCounts: {},
     settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: cadence, daysToEstablish: settle },
     updatedAt: Date.now(),
   };

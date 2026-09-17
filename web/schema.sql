@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS children (
   clinician_cleared      TEXT NOT NULL DEFAULT '[]',
   excluded               TEXT NOT NULL DEFAULT '[]',
   scheduled              TEXT NOT NULL DEFAULT '[]',
+  exposure_counts        TEXT NOT NULL DEFAULT '{}',
   settings               TEXT NOT NULL DEFAULT '{}',
   updated_at             INTEGER NOT NULL
 );

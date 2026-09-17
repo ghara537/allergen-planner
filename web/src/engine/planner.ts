@@ -246,6 +246,18 @@ export function effectivePlans(p: DosePlan[]): DosePlan[] {
   return p.filter((x) => !superseded.has(x.id));
 }
 
+/** Exposures for a food: whatever the parent asserted, plus anything logged
+ *  since. Without an assertion it is simply the count of logged exposures. */
+export function exposureCount(
+  a: Allergen, history: FoodEvent[], profile: ChildProfile, day: Day,
+): number {
+  const logged = history.filter((e) => e.childId === profile.id && e.allergen === a
+    && e.kind === "exposure" && compareDay(e.day, day) <= 0);
+  const base = (profile.exposureCounts ?? {})[a];
+  if (!base) return logged.length;
+  return base.count + logged.filter((e) => compareDay(e.day, base.asOf) > 0).length;
+}
+
 export function lastReaction(
   a: Allergen, history: FoodEvent[], childId: string, onOrBefore: Day,
 ): Day | null {
@@ -283,8 +295,11 @@ export function statuses(
     // Settled = sustained exposure across the window, first to LAST - so one
     // exposure followed by silence never counts.
     const first = exposures[0]!.day, last = exposures[exposures.length - 1]!.day;
-    if (daysBetween(first, last) >= st.daysToEstablish) out[a] = { kind: "established", on: last };
-    else out[a] = { kind: "inProgress", exposures: exposures.length };
+    const n = exposureCount(a, history, profile, day);
+    const settled = daysBetween(first, last) >= st.daysToEstablish
+                 && n >= (st.exposuresToSettle ?? 5)
+                 && !lastReaction(a, history, profile.id, day);
+    out[a] = settled ? { kind: "established", on: last } : { kind: "inProgress", exposures: n };
   }
   return out;
 }

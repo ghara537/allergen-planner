@@ -182,3 +182,32 @@ select{appearance:none;-webkit-appearance:none;
                    linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);
   background-position:calc(100% - 18px) calc(1em + 2px),calc(100% - 13px) calc(1em + 2px);
   background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:38px}
+
+/* ---- today: typed list ---- */
+.seg.viewtoggle{margin:18px 0 10px}
+.list.naps li.naprow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.naprow input.tm{width:118px;min-height:44px;padding:9px 10px;flex:none}
+.naprow input.mins{width:66px;min-height:44px;padding:9px 10px;flex:none;
+  text-align:center;font-variant-numeric:tabular-nums}
+.naprow .for{font-size:13px;color:var(--ink-3)}
+.naprow .check.tick-only{margin:0 0 0 auto;flex:none}
+.naprow button{flex:none}
+
+.list li input.amt{width:88px;min-height:42px;padding:8px 10px;flex:none;
+  text-align:right;font-variant-numeric:tabular-nums}
+.list li .unit{font-size:13px;color:var(--ink-3);min-width:32px}
+
+/* ---- foods: traffic light ---- */
+.list.foods li.foodrow{display:flex;align-items:center;gap:10px;
+  border-left:3px solid transparent;padding-left:11px;margin-left:-11px}
+.foodrow .nm{flex:1;display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-weight:600}
+.foodrow input.cnt{width:62px;min-height:42px;padding:8px;flex:none;text-align:center;
+  font-variant-numeric:tabular-nums;font-weight:650}
+.foodrow .of{font-size:12px;color:var(--ink-3);white-space:nowrap}
+.foodrow.warnt{border-left-color:var(--ochre)}
+.foodrow.warnt input.cnt{border-color:var(--ochre);color:var(--ochre)}
+.foodrow.good{border-left-color:var(--jade)}
+.foodrow.good input.cnt{border-color:var(--jade);color:var(--jade)}
+.foodrow.bad{border-left-color:var(--brick)}
+.foodrow.bad input.cnt{border-color:var(--brick);color:var(--brick)}
+.foodrow.off{opacity:.5}

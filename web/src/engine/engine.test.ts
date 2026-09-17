@@ -1,5 +1,5 @@
 import { addDays, daysBetween, day as D } from "./daymath.js";
-import { plan, statuses, amountOn, planFor, label, fmtAmount,
+import { plan, statuses, amountOn, planFor, label, fmtAmount, exposureCount,
          timeline, napsFor, hhmm } from "./planner.js";
 import {
   ALLERGENS_BY_JURISDICTION, DEFAULT_SETTINGS,
@@ -21,7 +21,7 @@ let seq = 0;
 const profile = (o: Partial<ChildProfile> = {}): ChildProfile => ({
   id: KID, name: "Baby", birthDate: born, riskTier: "standard" as RiskTier,
   jurisdiction: "us", readinessConfirmedOn: D(2026, 7, 1),
-  clinicianCleared: [], excluded: [], scheduled: [],
+  clinicianCleared: [], excluded: [], scheduled: [], exposureCounts: {},
   settings: { ...DEFAULT_SETTINGS } as ChildSettings, updatedAt: 0, ...o,
 });
 const ev = (a: Allergen, d: Day, kind: FoodEvent["kind"] = "exposure",
@@ -55,8 +55,10 @@ check("high risk + per-allergen clearance unblocks that food",
   one(profile({ riskTier: "severeEczemaOrEggAllergy", clinicianCleared: ["peanut"] }), []).introduce?.allergen === "peanut");
 
 console.log("\n== Settled is measured first exposure to LAST ==");
-const sustained = [ev("peanut", D(2026, 8, 1)), ev("peanut", D(2026, 8, 15)), ev("peanut", D(2026, 8, 25))];
-check("24 days of eating counts as settled",
+const sustained = [ev("peanut", D(2026, 8, 1)), ev("peanut", D(2026, 8, 8)),
+                   ev("peanut", D(2026, 8, 15)), ev("peanut", D(2026, 8, 20)),
+                   ev("peanut", D(2026, 8, 25))];
+check("24 days and five exposures counts as settled",
   statuses(profile(), sustained, [], today).peanut?.kind === "established");
 const tasted = [ev("peanut", D(2026, 8, 1))];
 check("one taste then silence does NOT count",
@@ -65,7 +67,8 @@ const tight = [ev("egg", D(2026, 9, 1)), ev("egg", D(2026, 9, 5))];
 check("4 days apart is not yet settled",
   statuses(profile(), tight, [], today).egg?.kind === "inProgress");
 check("settings are per child",
-  statuses(profile({ settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: 5, daysToEstablish: 3 } }), tight, [], today)
+  statuses(profile({ settings: { ...DEFAULT_SETTINGS, newAllergenCadenceDays: 5,
+                                 daysToEstablish: 3, exposuresToSettle: 2 } }), tight, [], today)
     .egg?.kind === "established");
 
 console.log("\n== Cadence between new foods ==");
@@ -126,6 +129,29 @@ check("the flag survives later exposures",
     .concat([one(profile(), [...reacted, ev("egg", D(2026, 9, 12))]).introduce as any])
     .filter(Boolean).some((m: any) => m.allergen === "egg" && m.reactedOn !== null));
 
+console.log("\n== Exposure counts ==");
+{
+  const three = [ev("wheat", D(2026, 8, 1)), ev("wheat", D(2026, 8, 9)), ev("wheat", D(2026, 8, 20))];
+  check("counts logged exposures", exposureCount("wheat", three, profile(), today) === 3);
+  // Asserting a number replaces the history before it, and later logs add on.
+  const asserted = profile({ exposureCounts: { wheat: { count: 10, asOf: D(2026, 8, 10) } } });
+  check("an asserted count overrides earlier history",
+    exposureCount("wheat", three, asserted, today) === 11);
+  check("nothing logged after the assertion leaves it alone",
+    exposureCount("wheat", three.slice(0, 2), asserted, today) === 10);
+  check("a future day does not count yet",
+    exposureCount("wheat", three, profile(), D(2026, 8, 5)) === 1);
+  check("settling needs the count as well as the span",
+    statuses(profile({ settings: { ...DEFAULT_SETTINGS, exposuresToSettle: 99 } }),
+             sustained, [], today).peanut?.kind === "inProgress");
+  check("an asserted count can settle a food on its own",
+    statuses(profile({ exposureCounts: { peanut: { count: 20, asOf: D(2026, 8, 1) } } }),
+             sustained, [], today).peanut?.kind === "established");
+  check("a reaction stops it settling",
+    statuses(profile(), [...sustained, ev("peanut", D(2026, 8, 26), "reaction")], [], today)
+      .peanut?.kind !== "established");
+}
+
 console.log("\n== Explicitly scheduled foods ==");
 {
   const queued = one(profile({ scheduled: ["sesame"] }), sustained);
@@ -163,7 +189,9 @@ console.log("\n== Maintenance outlives introduction ==");
 const all: FoodEvent[] = [];
 let d = D(2026, 3, 1);
 for (const a of ALLERGENS_BY_JURISDICTION.us) {
-  all.push(ev(a, d)); all.push(ev(a, addDays(25, d))); d = addDays(30, d);
+  // Five exposures across 25 days: clears both the span and the count.
+  for (const off of [0, 6, 12, 18, 25]) all.push(ev(a, addDays(off, d)));
+  d = addDays(30, d);
 }
 const toddler = one(profile(), all, [], D(2029, 9, 14));
 check("nothing left to introduce", toddler.introduce === null);
